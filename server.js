@@ -91,9 +91,8 @@ app.post("/stitch", async (req, res) => {
 
    // merge videos
 	await execPromise(
-	  `cd temp && ffmpeg -f concat -safe 0 -i list.txt -c copy merged.mp4`
+	  `cd temp && ffmpeg -f concat -safe 0 -i list.txt -vf "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2" -c:v libx264 -c:a aac merged.mp4`
 	);
-
 	console.log("Adding voice...");
 
 	// add voice
