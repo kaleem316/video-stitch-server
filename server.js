@@ -64,9 +64,9 @@ app.post("/stitch", async (req, res) => {
     // download videos
     let videoFiles = [];
     for (let i = 0; i < videos.length; i++) {
-      const path = `./temp/video${i}.mp4`;
-      await downloadFile(videos[i], path);
-      videoFiles.push(path);
+      const fullPath = `./temp/video${i}.mp4`;
+	  await downloadFile(videos[i], fullPath);
+	  videoFiles.push(`video${i}.mp4`);
     }
 
     // download voice
