@@ -8,16 +8,28 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
+// ✅ TEST ROUTE (VERY IMPORTANT)
+app.get("/", (req, res) => {
+  res.send("Server is running 🚀");
+});
+
 function execPromise(cmd) {
   return new Promise((resolve, reject) => {
     exec(cmd, (err, stdout, stderr) => {
-      if (err) reject(stderr);
-      else resolve(stdout);
+      if (err) {
+        console.error("FFMPEG ERROR:", stderr);
+        reject(stderr);
+      } else {
+        console.log("FFMPEG SUCCESS:", stdout);
+        resolve(stdout);
+      }
     });
   });
 }
 
 async function downloadFile(url, path) {
+  console.log("Downloading:", url);
+
   const writer = fs.createWriteStream(path);
   const response = await axios({
     url,
@@ -28,7 +40,10 @@ async function downloadFile(url, path) {
   response.data.pipe(writer);
 
   return new Promise((resolve, reject) => {
-    writer.on("finish", resolve);
+    writer.on("finish", () => {
+      console.log("Downloaded:", path);
+      resolve();
+    });
     writer.on("error", reject);
   });
 }
@@ -40,6 +55,8 @@ app.post("/stitch", async (req, res) => {
     if (!videos || videos.length < 3) {
       return res.status(400).json({ error: "Need 3+ videos" });
     }
+
+    console.log("Starting stitching...");
 
     // create temp folder
     if (!fs.existsSync("./temp")) fs.mkdirSync("./temp");
@@ -63,19 +80,25 @@ app.post("/stitch", async (req, res) => {
       await downloadFile(music, musicPath);
     }
 
-    // create concat file
+    // create concat list
     const list = videoFiles.map(v => `file '${v}'`).join("\n");
     fs.writeFileSync("./temp/list.txt", list);
+
+    console.log("Merging videos...");
 
     // merge videos
     await execPromise(
       `ffmpeg -f concat -safe 0 -i ./temp/list.txt -c copy ./temp/merged.mp4`
     );
 
+    console.log("Adding voice...");
+
     // add voice
     await execPromise(
       `ffmpeg -i ./temp/merged.mp4 -i ${voicePath} -c:v copy -c:a aac ./temp/voice.mp4`
     );
+
+    console.log("Adding music...");
 
     // add music
     if (musicPath) {
@@ -86,13 +109,17 @@ app.post("/stitch", async (req, res) => {
       fs.copyFileSync("./temp/voice.mp4", "./temp/final.mp4");
     }
 
+    console.log("Sending final video...");
+
     res.download("./temp/final.mp4");
 
   } catch (e) {
+    console.error("ERROR:", e);
     res.status(500).json({ error: e.toString() });
   }
 });
 
+// ✅ IMPORTANT (Railway needs this)
 app.listen(PORT, () => {
-  console.log("Server running...");
+  console.log(`Server running on port ${PORT}`);
 });
