@@ -63,11 +63,14 @@ app.post("/stitch", async (req, res) => {
 
     // download videos
     let videoFiles = [];
-    for (let i = 0; i < videos.length; i++) {
-      const fullPath = `./temp/video${i}.mp4`;
+
+	for (let i = 0; i < videos.length; i++) {
+	  const fullPath = `./temp/video${i}.mp4`;
+
 	  await downloadFile(videos[i], fullPath);
-	  videoFiles.push(`video${i}.mp4`);
-    }
+
+	  videoFiles.push(`video${i}.mp4`); // ✅ ONLY filename
+	}
 
     // download voice
     const voicePath = "./temp/voice.mp3";
@@ -86,28 +89,28 @@ app.post("/stitch", async (req, res) => {
 
     console.log("Merging videos...");
 
-    // merge videos
-    await execPromise(
-      `ffmpeg -f concat -safe 0 -i ./temp/list.txt -c copy ./temp/merged.mp4`
-    );
+   // merge videos
+	await execPromise(
+	  `cd temp && ffmpeg -f concat -safe 0 -i list.txt -c copy merged.mp4`
+	);
 
-    console.log("Adding voice...");
+	console.log("Adding voice...");
 
-    // add voice
-    await execPromise(
-      `ffmpeg -i ./temp/merged.mp4 -i ${voicePath} -c:v copy -c:a aac ./temp/voice.mp4`
-    );
+	// add voice
+	await execPromise(
+	  `cd temp && ffmpeg -i merged.mp4 -i voice.mp3 -c:v copy -c:a aac voice.mp4`
+	);
 
-    console.log("Adding music...");
+	console.log("Adding music...");
 
-    // add music
-    if (musicPath) {
-      await execPromise(
-        `ffmpeg -i ./temp/voice.mp4 -i ${musicPath} -filter_complex "[1:a]volume=0.3[a1];[0:a][a1]amix=inputs=2" -c:v copy ./temp/final.mp4`
-      );
-    } else {
-      fs.copyFileSync("./temp/voice.mp4", "./temp/final.mp4");
-    }
+	// add music
+	if (musicPath) {
+	  await execPromise(
+		`cd temp && ffmpeg -i voice.mp4 -i music.mp3 -filter_complex "[1:a]volume=0.3[a1];[0:a][a1]amix=inputs=2" -c:v copy final.mp4`
+	  );
+	} else {
+	  fs.copyFileSync("./temp/voice.mp4", "./temp/final.mp4");
+	}
 
     console.log("Sending final video...");
 
