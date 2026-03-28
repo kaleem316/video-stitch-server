@@ -8,11 +8,12 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-// ✅ TEST ROUTE (VERY IMPORTANT)
+// ✅ TEST ROUTE
 app.get("/", (req, res) => {
   res.send("Server is running 🚀");
 });
 
+// ================= EXEC =================
 function execPromise(cmd) {
   return new Promise((resolve, reject) => {
     exec(cmd, (err, stdout, stderr) => {
@@ -27,6 +28,7 @@ function execPromise(cmd) {
   });
 }
 
+// ================= DOWNLOAD =================
 async function downloadFile(url, path) {
   console.log("Downloading:", url);
 
@@ -48,6 +50,7 @@ async function downloadFile(url, path) {
   });
 }
 
+// ================= STITCH =================
 app.post("/stitch", async (req, res) => {
   try {
     const { videos, voice, music } = req.body;
@@ -58,58 +61,65 @@ app.post("/stitch", async (req, res) => {
 
     console.log("Starting stitching...");
 
-    // create temp folder
     if (!fs.existsSync("./temp")) fs.mkdirSync("./temp");
 
-    // download videos
+    // ================= DOWNLOAD VIDEOS =================
     let videoFiles = [];
 
-	for (let i = 0; i < videos.length; i++) {
-	  const fullPath = `./temp/video${i}.mp4`;
+    for (let i = 0; i < videos.length; i++) {
+      const fullPath = `./temp/video${i}.mp4`;
+      await downloadFile(videos[i], fullPath);
+      videoFiles.push(`video${i}.mp4`);
+    }
 
-	  await downloadFile(videos[i], fullPath);
-
-	  videoFiles.push(`video${i}.mp4`); // ✅ ONLY filename
-	}
-
-    // download voice
+    // ================= DOWNLOAD AUDIO =================
     const voicePath = "./temp/voice.mp3";
     await downloadFile(voice, voicePath);
 
-    // download music (optional)
     let musicPath = null;
     if (music) {
       musicPath = "./temp/music.mp3";
       await downloadFile(music, musicPath);
     }
 
-    // create concat list
-    const list = videoFiles.map(v => `file '${v}'`).join("\n");
-    fs.writeFileSync("./temp/list.txt", list);
-
+    // ================= MERGE VIDEOS (FINAL FIX) =================
     console.log("Merging videos...");
 
-   // merge videos
-	await execPromise(
-	  `cd temp && ffmpeg -f concat -safe 0 -i list.txt -vf "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2" -c:v libx264 -c:a aac merged.mp4`
-	);
-	console.log("Adding voice...");
+    const inputs = videoFiles.map(v => `-i ${v}`).join(" ");
 
-	// add voice
-	await execPromise(
-	  `cd temp && ffmpeg -i merged.mp4 -i voice.mp3 -c:v copy -c:a aac voice.mp4`
-	);
+    const filterInputs = videoFiles
+      .map((_, i) => `[${i}:v:0][${i}:a:0]`)
+      .join("");
 
-	console.log("Adding music...");
+    const concatFilter = `${filterInputs}concat=n=${videoFiles.length}:v=1:a=1[outv][outa]`;
 
-	// add music
-	if (musicPath) {
-	  await execPromise(
-		`cd temp && ffmpeg -i voice.mp4 -i music.mp3 -filter_complex "[1:a]volume=0.3[a1];[0:a][a1]amix=inputs=2" -c:v copy final.mp4`
-	  );
-	} else {
-	  fs.copyFileSync("./temp/voice.mp4", "./temp/final.mp4");
-	}
+    await execPromise(`
+      cd temp && ffmpeg ${inputs} \
+      -filter_complex "${concatFilter}" \
+      -map "[outv]" -map "[outa]" \
+      -c:v libx264 -c:a aac merged.mp4
+    `);
+
+    // ================= ADD VOICE =================
+    console.log("Adding voice...");
+
+    await execPromise(`
+      cd temp && ffmpeg -i merged.mp4 -i voice.mp3 \
+      -c:v copy -c:a aac voice.mp4
+    `);
+
+    // ================= ADD MUSIC =================
+    console.log("Adding music...");
+
+    if (musicPath) {
+      await execPromise(`
+        cd temp && ffmpeg -i voice.mp4 -i music.mp3 \
+        -filter_complex "[1:a]volume=0.3[a1];[0:a][a1]amix=inputs=2" \
+        -c:v copy final.mp4
+      `);
+    } else {
+      fs.copyFileSync("./temp/voice.mp4", "./temp/final.mp4");
+    }
 
     console.log("Sending final video...");
 
@@ -121,7 +131,7 @@ app.post("/stitch", async (req, res) => {
   }
 });
 
-// ✅ IMPORTANT (Railway needs this)
+// ================= START =================
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
