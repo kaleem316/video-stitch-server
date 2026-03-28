@@ -12,19 +12,8 @@ const PORT = process.env.PORT || 3000;
 app.get("/", (req, res) => res.send("Boogatu Stitch Server 🚀"));
 
 // ─────────────────────────────────────────────
-// Supported xfade transitions
+// Flutter name → FFmpeg xfade name
 // ─────────────────────────────────────────────
-const VALID_TRANSITIONS = new Set([
-  "fade", "fadeblack", "fadewhite",
-  "slide_left", "slide_right", "slide_up", "slide_down",
-  "zoom_in", "zoom_out",
-  "wipe_left", "wipe_right",
-  "diamond", "heart", "cone", "pixelize", "radial",
-  "hlslice", "hrslice", "vuslice", "vdslice",
-  "none",
-]);
-
-// Map Flutter names → FFmpeg xfade names
 const TRANSITION_MAP = {
   none:        null,
   fade:        "fade",
@@ -35,7 +24,7 @@ const TRANSITION_MAP = {
   slide_up:    "slideup",
   slide_down:  "slidedown",
   zoom_in:     "zoomin",
-  zoom_out:    "fadegrays",   // closest available for zoom_out
+  zoom_out:    "fadefast",
   wipe_left:   "wipeleft",
   wipe_right:  "wiperight",
   diamond:     "diagtl",
@@ -54,10 +43,10 @@ const TRANSITION_MAP = {
 // ─────────────────────────────────────────────
 function execPromise(cmd) {
   return new Promise((resolve, reject) => {
-    exec(cmd, { maxBuffer: 1024 * 1024 * 100, timeout: 300_000 }, (err, stdout, stderr) => {
+    exec(cmd, { maxBuffer: 1024 * 1024 * 100, timeout: 600_000 }, (err, stdout, stderr) => {
       if (err) {
-        console.error("❌ FFmpeg ERROR:\n", stderr?.slice(-3000));
-        reject(new Error(stderr?.slice(-2000) || err.message));
+        console.error("❌ FFmpeg ERROR:\n", (stderr || "").slice(-2000));
+        reject(new Error((stderr || err.message).slice(-1500)));
       } else {
         resolve(stdout);
       }
@@ -66,17 +55,19 @@ function execPromise(cmd) {
 }
 
 async function downloadFile(url, dest) {
-  console.log("⬇️  Downloading:", url.slice(0, 80));
+  console.log("⬇️  Downloading:", url.slice(0, 80) + "...");
   const writer = fs.createWriteStream(dest);
-  const response = await axios({ url, method: "GET", responseType: "stream", timeout: 120_000 });
+  const response = await axios({
+    url, method: "GET", responseType: "stream", timeout: 120_000
+  });
   response.data.pipe(writer);
   return new Promise((resolve, reject) => {
-    writer.on("finish", () => { console.log("✅ Downloaded:", path.basename(dest)); resolve(); });
+    writer.on("finish", () => { console.log("✅ Done:", path.basename(dest)); resolve(); });
     writer.on("error", reject);
   });
 }
 
-// Check if file has audio stream
+// Check if file has an audio stream
 function hasAudio(filePath) {
   return new Promise((resolve) => {
     exec(
@@ -86,21 +77,21 @@ function hasAudio(filePath) {
   });
 }
 
-// Get video duration in seconds
+// Get duration in seconds
 function getDuration(filePath) {
   return new Promise((resolve) => {
     exec(
       `ffprobe -v error -show_entries format=duration -of csv=p=0 "${filePath}"`,
-      (err, stdout) => resolve(parseFloat(stdout.trim()) || 5)
+      (err, stdout) => resolve(Math.max(1, parseFloat(stdout.trim()) || 5))
     );
   });
 }
 
-// Add silent audio to video that has no audio stream
+// Add silent audio if missing
 async function ensureAudio(input, output) {
-  const has = await hasAudio(input);
-  if (has) {
+  if (await hasAudio(input)) {
     fs.copyFileSync(input, output);
+    console.log(`✅ Audio OK: ${path.basename(input)}`);
   } else {
     console.log(`🔇 Adding silence to: ${path.basename(input)}`);
     await execPromise(
@@ -110,106 +101,88 @@ async function ensureAudio(input, output) {
   }
 }
 
-// Normalize all clips to same resolution, fps, codec
+// ─────────────────────────────────────────────
+// Normalize clip:
+//  - Scale to 540x960 (lower than 720p → saves ~40% RAM)
+//  - Force yuv420p (NOT 444p — this was the RAM killer)
+//  - 25fps, fast preset, threads=2 (cap CPU on Railway)
+// ─────────────────────────────────────────────
 async function normalizeClip(input, output) {
+  console.log(`📐 Normalizing: ${path.basename(input)}`);
   await execPromise(
     `ffmpeg -y -i "${input}" ` +
-    `-vf "scale=720:1280:force_original_aspect_ratio=decrease,` +
-    `pad=720:1280:(ow-iw)/2:(oh-ih)/2:color=black,fps=30,` +
+    `-vf "scale=540:960:force_original_aspect_ratio=decrease,` +
+    `pad=540:960:(ow-iw)/2:(oh-ih)/2:color=black,` +
+    `fps=25,` +
     `format=yuv420p" ` +
-    `-c:v libx264 -preset fast -crf 23 ` +
-    `-c:a aac -ar 44100 -ac 2 ` +
-    `-movflags +faststart ` +
+    `-c:v libx264 -preset ultrafast -crf 26 -threads 2 ` +
+    `-c:a aac -ar 44100 -ac 2 -b:a 128k ` +
     `"${output}"`
   );
 }
 
 // ─────────────────────────────────────────────
-// Build xfade filter for N clips with transitions
+// Apply ONE xfade transition between two clips.
+// Processes pairs one-at-a-time → constant low RAM.
 // ─────────────────────────────────────────────
-async function buildXfadeFilter(normFiles, transitions, transitionDuration, tmp) {
-  const n = normFiles.length;
-  const td = Math.max(0.1, Math.min(2.0, transitionDuration || 0.5));
+async function applyTransition(clipA, clipB, output, transition, duration) {
+  const td = Math.max(0.1, Math.min(1.5, duration || 0.5));
+  const ffTrans = TRANSITION_MAP[transition] || "fade";
 
-  // Get durations
-  const durations = [];
-  for (const f of normFiles) {
-    durations.push(await getDuration(f));
-  }
-
-  // Check if ALL transitions are "none" → use simple concat demuxer (faster)
-  const allNone = transitions.every(t => !t || t === "none");
-  if (allNone || n === 1) {
-    console.log("📎 Using simple concat (no transitions)");
-
-    const concatFile = path.join(tmp, "concat.txt");
-    fs.writeFileSync(concatFile, normFiles.map(f => `file '${f}'`).join("\n"));
-
-    const concatOut = path.join(tmp, "concat_out.mp4");
+  // For "none" → use simple concat demuxer (no re-encode, fastest)
+  if (!ffTrans) {
+    const listFile = output + "_list.txt";
+    fs.writeFileSync(listFile, `file '${clipA}'\nfile '${clipB}'\n`);
     await execPromise(
-      `ffmpeg -y -f concat -safe 0 -i "${concatFile}" ` +
-      `-c:v libx264 -preset fast -crf 22 -c:a aac "${concatOut}"`
+      `ffmpeg -y -f concat -safe 0 -i "${listFile}" -c copy "${output}"`
     );
-    return concatOut;
+    fs.unlinkSync(listFile);
+    return;
   }
 
-  // Build xfade filter_complex for clips with transitions
-  // Input args: -i clip0 -i clip1 -i clip2 ...
-  const inputArgs = normFiles.map(f => `-i "${f}"`).join(" ");
+  const dur = await getDuration(clipA);
+  const offset = Math.max(0.1, dur - td);
 
-  // filter_complex builds a chain:
-  // [0:v][1:v]xfade=...[v01]; [v01][2:v]xfade=...[v012]; ...
-  // [0:a][1:a]acrossfade=...[a01]; [a01][2:a]acrossfade=...[a012]; ...
-  let vChain = "[0:v]";
-  let aChain = "[0:a]";
-  let filterParts = [];
-
-  let cumulativeOffset = 0; // running video offset in seconds
-
-  for (let i = 0; i < n - 1; i++) {
-    const trans = transitions[i];
-    const ffTrans = TRANSITION_MAP[trans] || "fade";
-    const vIn  = i === 0 ? "[0:v]" : `[v${i}]`;
-    const aIn  = i === 0 ? "[0:a]" : `[a${i}]`;
-    const vNext = `[${i + 1}:v]`;
-    const aNext = `[${i + 1}:a]`;
-    const vOut  = `[v${i + 1}]`;
-    const aOut  = `[a${i + 1}]`;
-
-    // Offset = sum of all previous durations minus transition overlap
-    cumulativeOffset += durations[i] - td;
-
-    if (trans === "none") {
-      // No xfade — just concat these two with no transition
-      filterParts.push(`${vIn}${vNext}concat=n=2:v=1:a=0${vOut}`);
-      filterParts.push(`${aIn}${aNext}concat=n=2:v=0:a=1${aOut}`);
-    } else {
-      // xfade transition
-      filterParts.push(
-        `${vIn}${vNext}xfade=transition=${ffTrans}:duration=${td}:offset=${cumulativeOffset.toFixed(3)}${vOut}`
-      );
-      // acrossfade for audio
-      filterParts.push(
-        `${aIn}${aNext}acrossfade=d=${td}${aOut}`
-      );
-    }
-  }
-
-  const lastV = `[v${n - 1}]`;
-  const lastA = `[a${n - 1}]`;
-  const filterComplex = filterParts.join(";");
-
-  const xfadeOut = path.join(tmp, "xfade_out.mp4");
+  // xfade for video + acrossfade for audio, one pair at a time
   await execPromise(
-    `ffmpeg -y ${inputArgs} ` +
-    `-filter_complex "${filterComplex}" ` +
-    `-map "${lastV}" -map "${lastA}" ` +
-    `-c:v libx264 -preset fast -crf 22 ` +
-    `-c:a aac -ar 44100 -ac 2 ` +
-    `"${xfadeOut}"`
+    `ffmpeg -y -i "${clipA}" -i "${clipB}" ` +
+    `-filter_complex ` +
+    `"[0:v][1:v]xfade=transition=${ffTrans}:duration=${td}:offset=${offset.toFixed(3)}[vout];` +
+    `[0:a][1:a]acrossfade=d=${td}[aout]" ` +
+    `-map "[vout]" -map "[aout]" ` +
+    `-c:v libx264 -preset ultrafast -crf 26 -threads 2 ` +
+    `-pix_fmt yuv420p ` +
+    `-c:a aac -ar 44100 -ac 2 -b:a 128k ` +
+    `"${output}"`
   );
+}
 
-  return xfadeOut;
+// ─────────────────────────────────────────────
+// Stitch N clips sequentially (pair-by-pair)
+// Memory stays constant regardless of clip count
+// ─────────────────────────────────────────────
+async function stitchAllClips(normFiles, transitions, transitionDuration, tmp) {
+  if (normFiles.length === 1) return normFiles[0];
+
+  let currentFile = normFiles[0];
+
+  for (let i = 0; i < normFiles.length - 1; i++) {
+    const nextFile  = normFiles[i + 1];
+    const trans     = transitions[i] || "fade";
+    const outputFile = path.join(tmp, `stitched_${i + 1}.mp4`);
+
+    console.log(`✂️  Clip ${i + 1} → ${i + 2}: transition="${trans}"`);
+    await applyTransition(currentFile, nextFile, outputFile, trans, transitionDuration);
+
+    // Delete the intermediate file from the previous step to free disk space
+    if (i > 0 && currentFile !== normFiles[0]) {
+      try { fs.unlinkSync(currentFile); } catch {}
+    }
+
+    currentFile = outputFile;
+  }
+
+  return currentFile;
 }
 
 // ─────────────────────────────────────────────
@@ -223,13 +196,13 @@ app.post("/stitch", async (req, res) => {
       videos,
       voice,
       music,
-      voiceVolume       = 1.0,
-      musicVolume       = 0.15,
-      transitions       = [],
+      voiceVolume        = 1.0,
+      musicVolume        = 0.15,
+      transitions        = [],
       transitionDuration = 0.5,
     } = req.body;
 
-    // Validate
+    // ── Validate ──────────────────────────────────────────────────────────────
     if (!Array.isArray(videos) || videos.length < 3) {
       return res.status(400).json({ error: "Need at least 3 video URLs" });
     }
@@ -238,114 +211,116 @@ app.post("/stitch", async (req, res) => {
     }
 
     fs.mkdirSync(tmp, { recursive: true });
-    console.log(`\n🎬 Job started in ${tmp}`);
+    console.log(`\n🎬 New job — ${videos.length} clips — tmp: ${tmp}`);
 
     // ── 1. Download videos ───────────────────────────────────────────────────
-    console.log("\n📥 Downloading videos...");
+    console.log("\n📥 Step 1: Downloading videos...");
     for (let i = 0; i < videos.length; i++) {
       await downloadFile(videos[i], path.join(tmp, `raw_${i}.mp4`));
     }
 
-    // ── 2. Ensure audio on every clip ────────────────────────────────────────
-    console.log("\n🎵 Ensuring audio streams...");
+    // ── 2. Ensure every clip has audio ────────────────────────────────────────
+    console.log("\n🎵 Step 2: Checking audio streams...");
     for (let i = 0; i < videos.length; i++) {
       await ensureAudio(
         path.join(tmp, `raw_${i}.mp4`),
-        path.join(tmp, `audio_${i}.mp4`)
+        path.join(tmp, `withAudio_${i}.mp4`)
       );
     }
 
-    // ── 3. Normalize all clips to same spec ──────────────────────────────────
-    console.log("\n📐 Normalizing clips to 720x1280 @ 30fps...");
+    // ── 3. Normalize all clips ────────────────────────────────────────────────
+    console.log("\n📐 Step 3: Normalizing clips (540x960, yuv420p, 25fps)...");
     for (let i = 0; i < videos.length; i++) {
       await normalizeClip(
-        path.join(tmp, `audio_${i}.mp4`),
+        path.join(tmp, `withAudio_${i}.mp4`),
         path.join(tmp, `norm_${i}.mp4`)
       );
+      // Free raw files immediately
+      try {
+        fs.unlinkSync(path.join(tmp, `raw_${i}.mp4`));
+        fs.unlinkSync(path.join(tmp, `withAudio_${i}.mp4`));
+      } catch {}
     }
 
-    const normFiles = videos.map((_, i) => path.join(tmp, `norm_${i}.mp4`));
+    const normFiles   = videos.map((_, i) => path.join(tmp, `norm_${i}.mp4`));
+    const transArr    = videos.map((_, i) => transitions[i] || "fade");
 
-    // Pad transitions array to correct length
-    const transArr = videos.map((_, i) => transitions[i] || "fade");
+    // ── 4. Stitch with transitions (pair by pair) ─────────────────────────────
+    console.log("\n✂️  Step 4: Stitching with transitions...");
+    let currentPath = await stitchAllClips(normFiles, transArr, transitionDuration, tmp);
 
-    // ── 4. Concat with xfade transitions ─────────────────────────────────────
-    console.log("\n✂️  Applying transitions...");
-    const mergedPath = await buildXfadeFilter(
-      normFiles, transArr, transitionDuration, tmp
-    );
-
-    let currentPath = mergedPath;
-
-    // ── 5. Mix voiceover ─────────────────────────────────────────────────────
+    // ── 5. Mix voiceover ──────────────────────────────────────────────────────
     if (voice) {
-      console.log("\n🎤 Mixing voiceover...");
-      await downloadFile(voice, path.join(tmp, "voice.mp3"));
+      console.log("\n🎤 Step 5: Mixing voiceover...");
+      const voiceFile = path.join(tmp, "voice.mp3");
+      await downloadFile(voice, voiceFile);
 
-      const voicedPath = path.join(tmp, "voiced.mp4");
-      const vVol = Math.min(Math.max(parseFloat(voiceVolume) || 1.0, 0), 2);
+      const vVol      = Math.min(Math.max(parseFloat(voiceVolume) || 1.0, 0), 2);
+      const voicedOut = path.join(tmp, "voiced.mp4");
 
       await execPromise(
-        `ffmpeg -y -i "${currentPath}" -i "${path.join(tmp, "voice.mp3")}" ` +
+        `ffmpeg -y -i "${currentPath}" -i "${voiceFile}" ` +
         `-filter_complex ` +
         `"[0:a]volume=0.2[orig];` +
         `[1:a]volume=${vVol}[voice];` +
         `[orig][voice]amix=inputs=2:duration=first:dropout_transition=2[aout]" ` +
         `-map 0:v -map "[aout]" ` +
-        `-c:v copy -c:a aac -b:a 192k -shortest ` +
-        `"${voicedPath}"`
+        `-c:v copy -c:a aac -b:a 128k -shortest ` +
+        `"${voicedOut}"`
       );
-      currentPath = voicedPath;
+
+      try { fs.unlinkSync(currentPath); } catch {}
+      currentPath = voicedOut;
     }
 
     // ── 6. Mix background music ───────────────────────────────────────────────
     if (music) {
-      console.log("\n🎵 Mixing background music...");
-      await downloadFile(music, path.join(tmp, "music.mp3"));
+      console.log("\n🎵 Step 6: Mixing background music...");
+      const musicFile = path.join(tmp, "music.mp3");
+      await downloadFile(music, musicFile);
 
-      const finalPath = path.join(tmp, "final.mp4");
-      const mVol = Math.min(Math.max(parseFloat(musicVolume) || 0.15, 0), 1);
+      const mVol     = Math.min(Math.max(parseFloat(musicVolume) || 0.15, 0), 1);
+      const finalOut = path.join(tmp, "final.mp4");
 
       await execPromise(
-        `ffmpeg -y -i "${currentPath}" -i "${path.join(tmp, "music.mp3")}" ` +
+        `ffmpeg -y -i "${currentPath}" -i "${musicFile}" ` +
         `-filter_complex ` +
         `"[1:a]volume=${mVol}[music];` +
         `[0:a][music]amix=inputs=2:duration=first:dropout_transition=2[aout]" ` +
         `-map 0:v -map "[aout]" ` +
-        `-c:v copy -c:a aac -b:a 192k -shortest ` +
-        `"${finalPath}"`
+        `-c:v copy -c:a aac -b:a 128k -shortest ` +
+        `"${finalOut}"`
       );
-      currentPath = finalPath;
+
+      try { fs.unlinkSync(currentPath); } catch {}
+      currentPath = finalOut;
     }
 
-    // ── 7. Send file ──────────────────────────────────────────────────────────
-    const outputPath = currentPath;
-    const stat = fs.statSync(outputPath);
+    // ── 7. Stream result to client ────────────────────────────────────────────
+    const stat = fs.statSync(currentPath);
+    console.log(`\n✅ Sending ${(stat.size / 1024 / 1024).toFixed(1)} MB`);
 
-    console.log(`\n✅ Done! Sending ${(stat.size / 1024 / 1024).toFixed(1)} MB`);
-
-    res.setHeader("Content-Type", "video/mp4");
+    res.setHeader("Content-Type",        "video/mp4");
     res.setHeader("Content-Disposition", 'attachment; filename="stitched.mp4"');
-    res.setHeader("Content-Length", stat.size);
+    res.setHeader("Content-Length",      stat.size);
 
-    const readStream = fs.createReadStream(outputPath);
-    readStream.pipe(res);
+    const stream = fs.createReadStream(currentPath);
+    stream.pipe(res);
 
-    readStream.on("end", () => {
-      // Cleanup after send
+    stream.on("end", () => {
       setTimeout(() => {
-        fs.rmSync(tmp, { recursive: true, force: true });
-        console.log("🧹 Temp files cleaned");
+        try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
+        console.log("🧹 Temp cleaned");
       }, 5000);
     });
 
-    readStream.on("error", (err) => {
-      console.error("Stream error:", err);
+    stream.on("error", (err) => {
+      console.error("Stream error:", err.message);
       res.end();
     });
 
   } catch (e) {
-    console.error("\n❌ ERROR:", e.message);
+    console.error("\n❌ STITCH FAILED:", e.message);
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
     if (!res.headersSent) {
       res.status(500).json({ error: e.message || e.toString() });
@@ -358,5 +333,4 @@ app.post("/stitch", async (req, res) => {
 // ─────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`\n🚀 Boogatu Stitch Server on port ${PORT}`);
-  console.log(`   Transitions supported: ${[...VALID_TRANSITIONS].join(", ")}`);
 });
