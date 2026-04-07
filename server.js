@@ -87,6 +87,25 @@ function getDuration(filePath) {
   });
 }
 
+// Get video dimensions (width x height)
+function getResolution(filePath) {
+  return new Promise((resolve) => {
+    exec(
+      `ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "${filePath}"`,
+      (err, stdout) => {
+        if (err || !stdout.trim()) {
+          resolve({ width: 540, height: 960 }); // default 9:16
+        } else {
+          const parts = stdout.trim().split(",");
+          const width = parseInt(parts[0]) || 540;
+          const height = parseInt(parts[1]) || 960;
+          resolve({ width, height });
+        }
+      }
+    );
+  });
+}
+
 // Add silent audio if missing
 async function ensureAudio(input, output) {
   if (await hasAudio(input)) {
@@ -102,17 +121,46 @@ async function ensureAudio(input, output) {
 }
 
 // ─────────────────────────────────────────────
-// Normalize clip:
-//  - Scale to 540x960 (lower than 720p → saves ~40% RAM)
-//  - Force yuv420p (NOT 444p — this was the RAM killer)
-//  - 25fps, fast preset, threads=2 (cap CPU on Railway)
+// Detect dominant aspect ratio from all clips
+// Returns target width/height that matches input
 // ─────────────────────────────────────────────
-async function normalizeClip(input, output) {
-  console.log(`📐 Normalizing: ${path.basename(input)}`);
+async function detectTargetResolution(files) {
+  let totalWidth = 0;
+  let totalHeight = 0;
+
+  for (const file of files) {
+    const res = await getResolution(file);
+    totalWidth += res.width;
+    totalHeight += res.height;
+  }
+
+  const avgWidth = totalWidth / files.length;
+  const avgHeight = totalHeight / files.length;
+  const ratio = avgWidth / avgHeight;
+
+  // Determine aspect ratio bucket
+  if (ratio > 1.3) {
+    // Landscape (16:9)
+    return { width: 960, height: 540, label: "16:9 landscape" };
+  } else if (ratio > 0.9) {
+    // Square-ish (1:1)
+    return { width: 720, height: 720, label: "1:1 square" };
+  } else {
+    // Portrait (9:16)
+    return { width: 540, height: 960, label: "9:16 portrait" };
+  }
+}
+
+// ─────────────────────────────────────────────
+// Normalize clip to match target resolution
+// Uses scale+pad to fit without cropping
+// ─────────────────────────────────────────────
+async function normalizeClip(input, output, targetWidth, targetHeight) {
+  console.log(`📐 Normalizing: ${path.basename(input)} → ${targetWidth}x${targetHeight}`);
   await execPromise(
     `ffmpeg -y -i "${input}" ` +
-    `-vf "scale=540:960:force_original_aspect_ratio=decrease,` +
-    `pad=540:960:(ow-iw)/2:(oh-ih)/2:color=black,` +
+    `-vf "scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,` +
+    `pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2:color=black,` +
     `fps=25,` +
     `format=yuv420p" ` +
     `-c:v libx264 -preset ultrafast -crf 26 -threads 2 ` +
@@ -123,10 +171,10 @@ async function normalizeClip(input, output) {
 
 // ─────────────────────────────────────────────
 // Apply ONE xfade transition between two clips.
-// Processes pairs one-at-a-time → constant low RAM.
+// Fixed: uses actual clip duration for proper offset
 // ─────────────────────────────────────────────
 async function applyTransition(clipA, clipB, output, transition, duration) {
-  const td = Math.max(0.1, Math.min(1.5, duration || 0.5));
+  const td = Math.max(0.2, Math.min(2.0, duration || 0.5));
   const ffTrans = TRANSITION_MAP[transition] || "fade";
 
   // For "none" → use simple concat demuxer (no re-encode, fastest)
@@ -140,10 +188,16 @@ async function applyTransition(clipA, clipB, output, transition, duration) {
     return;
   }
 
-  const dur = await getDuration(clipA);
-  const offset = Math.max(0.1, dur - td);
+  // Get ACTUAL duration of clip A
+  const durA = await getDuration(clipA);
 
-  // xfade for video + acrossfade for audio, one pair at a time
+  // Offset = when transition starts = end of clipA minus transition duration
+  // Ensure offset is at least 0.5s into the clip (don't transition immediately)
+  const offset = Math.max(0.5, durA - td);
+
+  console.log(`  🔄 Transition "${ffTrans}" | clipA duration: ${durA.toFixed(2)}s | offset: ${offset.toFixed(2)}s | td: ${td}s`);
+
+  // xfade for video + acrossfade for audio
   await execPromise(
     `ffmpeg -y -i "${clipA}" -i "${clipB}" ` +
     `-filter_complex ` +
@@ -202,9 +256,9 @@ app.post("/stitch", async (req, res) => {
       transitionDuration = 0.5,
     } = req.body;
 
-    // ── Validate ──────────────────────────────────────────────────────────────
-    if (!Array.isArray(videos) || videos.length < 3) {
-      return res.status(400).json({ error: "Need at least 3 video URLs" });
+    // ── Validate (minimum 1 video now) ────────────────────────────────────
+    if (!Array.isArray(videos) || videos.length < 1) {
+      return res.status(400).json({ error: "Need at least 1 video URL" });
     }
     if (videos.length > 6) {
       return res.status(400).json({ error: "Max 6 videos" });
@@ -219,8 +273,14 @@ app.post("/stitch", async (req, res) => {
       await downloadFile(videos[i], path.join(tmp, `raw_${i}.mp4`));
     }
 
-    // ── 2. Ensure every clip has audio ────────────────────────────────────────
-    console.log("\n🎵 Step 2: Checking audio streams...");
+    // ── 2. Detect target resolution from input videos ─────────────────────
+    console.log("\n📏 Step 2: Detecting aspect ratio...");
+    const rawFiles = videos.map((_, i) => path.join(tmp, `raw_${i}.mp4`));
+    const target = await detectTargetResolution(rawFiles);
+    console.log(`   Target: ${target.width}x${target.height} (${target.label})`);
+
+    // ── 3. Ensure every clip has audio ────────────────────────────────────
+    console.log("\n🎵 Step 3: Checking audio streams...");
     for (let i = 0; i < videos.length; i++) {
       await ensureAudio(
         path.join(tmp, `raw_${i}.mp4`),
@@ -228,12 +288,14 @@ app.post("/stitch", async (req, res) => {
       );
     }
 
-    // ── 3. Normalize all clips ────────────────────────────────────────────────
-    console.log("\n📐 Step 3: Normalizing clips (540x960, yuv420p, 25fps)...");
+    // ── 4. Normalize all clips to detected resolution ─────────────────────
+    console.log(`\n📐 Step 4: Normalizing clips (${target.width}x${target.height}, yuv420p, 25fps)...`);
     for (let i = 0; i < videos.length; i++) {
       await normalizeClip(
         path.join(tmp, `withAudio_${i}.mp4`),
-        path.join(tmp, `norm_${i}.mp4`)
+        path.join(tmp, `norm_${i}.mp4`),
+        target.width,
+        target.height
       );
       // Free raw files immediately
       try {
@@ -242,17 +304,27 @@ app.post("/stitch", async (req, res) => {
       } catch {}
     }
 
-    const normFiles   = videos.map((_, i) => path.join(tmp, `norm_${i}.mp4`));
-    const transArr    = videos.map((_, i) => transitions[i] || "fade");
+    const normFiles = videos.map((_, i) => path.join(tmp, `norm_${i}.mp4`));
+    const transArr  = videos.map((_, i) => transitions[i] || "fade");
 
-    // ── 4. Stitch with transitions (pair by pair) ─────────────────────────────
-    console.log("\n✂️  Step 4: Stitching with transitions...");
-    let currentPath = await stitchAllClips(normFiles, transArr, transitionDuration, tmp);
+    // ── 5. Stitch with transitions (pair by pair) ─────────────────────────
+    let currentPath;
+    if (normFiles.length === 1) {
+      // Single video — no stitching needed
+      console.log("\n📎 Step 5: Single video — skipping stitch...");
+      currentPath = normFiles[0];
+    } else {
+      console.log("\n✂️  Step 5: Stitching with transitions...");
+      currentPath = await stitchAllClips(normFiles, transArr, transitionDuration, tmp);
+    }
 
-    // ── 5. Mix voiceover ──────────────────────────────────────────────────────
+    // ── 6. Mix voiceover ──────────────────────────────────────────────────
     if (voice) {
-      console.log("\n🎤 Step 5: Mixing voiceover...");
-      const voiceFile = path.join(tmp, "voice.mp3");
+      console.log("\n🎤 Step 6: Mixing voiceover...");
+      
+      // Support both .mp3 and .m4a
+      const voiceExt = voice.toLowerCase().includes(".m4a") ? "m4a" : "mp3";
+      const voiceFile = path.join(tmp, `voice.${voiceExt}`);
       await downloadFile(voice, voiceFile);
 
       const vVol      = Math.min(Math.max(parseFloat(voiceVolume) || 1.0, 0), 2);
@@ -273,10 +345,12 @@ app.post("/stitch", async (req, res) => {
       currentPath = voicedOut;
     }
 
-    // ── 6. Mix background music ───────────────────────────────────────────────
+    // ── 7. Mix background music ───────────────────────────────────────────
     if (music) {
-      console.log("\n🎵 Step 6: Mixing background music...");
-      const musicFile = path.join(tmp, "music.mp3");
+      console.log("\n🎵 Step 7: Mixing background music...");
+      
+      const musicExt = music.toLowerCase().includes(".m4a") ? "m4a" : "mp3";
+      const musicFile = path.join(tmp, `music.${musicExt}`);
       await downloadFile(music, musicFile);
 
       const mVol     = Math.min(Math.max(parseFloat(musicVolume) || 0.15, 0), 1);
@@ -296,7 +370,7 @@ app.post("/stitch", async (req, res) => {
       currentPath = finalOut;
     }
 
-    // ── 7. Stream result to client ────────────────────────────────────────────
+    // ── 8. Stream result to client ────────────────────────────────────────
     const stat = fs.statSync(currentPath);
     console.log(`\n✅ Sending ${(stat.size / 1024 / 1024).toFixed(1)} MB`);
 
