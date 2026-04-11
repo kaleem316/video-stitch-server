@@ -174,10 +174,12 @@ async function normalizeClip(input, output, targetWidth, targetHeight) {
 // Fixed: uses actual clip duration for proper offset
 // ─────────────────────────────────────────────
 async function applyTransition(clipA, clipB, output, transition, duration) {
-  const td = Math.max(0.2, Math.min(2.0, duration || 0.5));
+  const durA = await getDuration(clipA);
+  const durB = await getDuration(clipB);
+  const maxTd = Math.min(durA, durB) * 0.3;
+  const td = Math.max(0.2, Math.min(maxTd, duration || 0.5));
   const ffTrans = TRANSITION_MAP[transition] || "fade";
 
-  // For "none" → use simple concat demuxer (no re-encode, fastest)
   if (!ffTrans) {
     const listFile = output + "_list.txt";
     fs.writeFileSync(listFile, `file '${clipA}'\nfile '${clipB}'\n`);
@@ -188,16 +190,10 @@ async function applyTransition(clipA, clipB, output, transition, duration) {
     return;
   }
 
-  // Get ACTUAL duration of clip A
-  const durA = await getDuration(clipA);
-
-  // Offset = when transition starts = end of clipA minus transition duration
-  // Ensure offset is at least 0.5s into the clip (don't transition immediately)
   const offset = Math.max(0.5, durA - td);
 
-  console.log(`  🔄 Transition "${ffTrans}" | clipA duration: ${durA.toFixed(2)}s | offset: ${offset.toFixed(2)}s | td: ${td}s`);
+  console.log(`  🔄 Transition "${ffTrans}" | clipA: ${durA.toFixed(2)}s | clipB: ${durB.toFixed(2)}s | td: ${td.toFixed(2)}s | offset: ${offset.toFixed(2)}s`);
 
-  // xfade for video + acrossfade for audio
   await execPromise(
     `ffmpeg -y -i "${clipA}" -i "${clipB}" ` +
     `-filter_complex ` +
@@ -317,58 +313,162 @@ app.post("/stitch", async (req, res) => {
       console.log("\n✂️  Step 5: Stitching with transitions...");
       currentPath = await stitchAllClips(normFiles, transArr, transitionDuration, tmp);
     }
+	
+	// ── 5b. Add fade-to-black at the end ──────────────────────────────────
+	const lastTransition = transArr[transArr.length - 1] || "fadeblack";
+	if (lastTransition === "fadeblack" || lastTransition === "fade") {
+	  console.log("\n🎬 Step 5b: Adding fade-to-black ending...");
+	  const finalDur = await getDuration(currentPath);
+	  const fadeOutStart = Math.max(0, finalDur - 1.5); // 1.5s fade at end
+	  const fadedOut = path.join(tmp, "faded_end.mp4");
 
-    // ── 6. Mix voiceover ──────────────────────────────────────────────────
+	  await execPromise(
+		`ffmpeg -y -i "${currentPath}" ` +
+		`-vf "fade=t=out:st=${fadeOutStart.toFixed(3)}:d=1.5:color=black" ` +
+		`-af "afade=t=out:st=${fadeOutStart.toFixed(3)}:d=1.5" ` +
+		`-c:v libx264 -preset ultrafast -crf 26 -threads 2 ` +
+		`-pix_fmt yuv420p ` +
+		`-c:a aac -ar 44100 -ac 2 -b:a 128k ` +
+		`"${fadedOut}"`
+	  );
+
+	  try { fs.unlinkSync(currentPath); } catch {}
+	  currentPath = fadedOut;
+	}
+
+    // ── 6. Mix voiceover (auto-trim to fit video) ─────────────────────────
     if (voice) {
-      console.log("\n🎤 Step 6: Mixing voiceover...");
-      
-      // Support both .mp3 and .m4a
-      const voiceExt = voice.toLowerCase().includes(".m4a") ? "m4a" : "mp3";
-      const voiceFile = path.join(tmp, `voice.${voiceExt}`);
-      await downloadFile(voice, voiceFile);
+	  console.log("\n🎤 Step 6: Mixing voiceover (auto-trimmed)...");
+	  
+	  const voiceExt = voice.toLowerCase().includes(".m4a") ? "m4a" : "mp3";
+	  const voiceRaw = path.join(tmp, `voice_raw.${voiceExt}`);
+	  await downloadFile(voice, voiceRaw);
 
-      const vVol      = Math.min(Math.max(parseFloat(voiceVolume) || 1.0, 0), 2);
-      const voicedOut = path.join(tmp, "voiced.mp4");
+	  // Get video duration
+	  const videoDur = await getDuration(currentPath);
+	  const voiceDur = await getDuration(voiceRaw);
+	  
+	  console.log(`   Video: ${videoDur.toFixed(2)}s | Voice: ${voiceDur.toFixed(2)}s`);
 
-      await execPromise(
-        `ffmpeg -y -i "${currentPath}" -i "${voiceFile}" ` +
-        `-filter_complex ` +
-        `"[0:a]volume=0.2[orig];` +
-        `[1:a]volume=${vVol}[voice];` +
-        `[orig][voice]amix=inputs=2:duration=first:dropout_transition=2[aout]" ` +
-        `-map 0:v -map "[aout]" ` +
-        `-c:v copy -c:a aac -b:a 128k -shortest ` +
-        `"${voicedOut}"`
-      );
+	  // Trim/pad voice to match video duration
+	  const voiceTrimmed = path.join(tmp, "voice_trimmed.aac");
+	  
+	  if (voiceDur > videoDur) {
+		// Voice is LONGER than video → trim + fade out
+		const fadeStart = Math.max(0, videoDur - 1.0); // 1s fade at end
+		console.log(`   Trimming voice from ${voiceDur.toFixed(1)}s → ${videoDur.toFixed(1)}s`);
+		await execPromise(
+		  `ffmpeg -y -i "${voiceRaw}" ` +
+		  `-t ${videoDur.toFixed(3)} ` +
+		  `-af "afade=t=out:st=${fadeStart.toFixed(3)}:d=1.0" ` +
+		  `-c:a aac -ar 44100 -ac 2 -b:a 128k ` +
+		  `"${voiceTrimmed}"`
+		);
+	  } else if (voiceDur < videoDur - 0.5) {
+		// Voice is SHORTER than video → pad with silence at end
+		const padDur = videoDur - voiceDur;
+		console.log(`   Padding voice with ${padDur.toFixed(1)}s silence`);
+		await execPromise(
+		  `ffmpeg -y -i "${voiceRaw}" ` +
+		  `-af "apad=pad_dur=${padDur.toFixed(3)}" ` +
+		  `-t ${videoDur.toFixed(3)} ` +
+		  `-c:a aac -ar 44100 -ac 2 -b:a 128k ` +
+		  `"${voiceTrimmed}"`
+		);
+	  } else {
+		// Duration matches closely → just convert format
+		await execPromise(
+		  `ffmpeg -y -i "${voiceRaw}" ` +
+		  `-c:a aac -ar 44100 -ac 2 -b:a 128k ` +
+		  `"${voiceTrimmed}"`
+		);
+	  }
 
-      try { fs.unlinkSync(currentPath); } catch {}
-      currentPath = voicedOut;
-    }
+	  const vVol = Math.min(Math.max(parseFloat(voiceVolume) || 1.0, 0), 2);
+	  const voicedOut = path.join(tmp, "voiced.mp4");
 
-    // ── 7. Mix background music ───────────────────────────────────────────
-    if (music) {
-      console.log("\n🎵 Step 7: Mixing background music...");
-      
-      const musicExt = music.toLowerCase().includes(".m4a") ? "m4a" : "mp3";
-      const musicFile = path.join(tmp, `music.${musicExt}`);
-      await downloadFile(music, musicFile);
+	  await execPromise(
+		`ffmpeg -y -i "${currentPath}" -i "${voiceTrimmed}" ` +
+		`-filter_complex ` +
+		`"[0:a]volume=0.2[orig];` +
+		`[1:a]volume=${vVol}[voice];` +
+		`[orig][voice]amix=inputs=2:duration=first:dropout_transition=2[aout]" ` +
+		`-map 0:v -map "[aout]" ` +
+		`-c:v copy -c:a aac -b:a 128k -shortest ` +
+		`"${voicedOut}"`
+	  );
 
-      const mVol     = Math.min(Math.max(parseFloat(musicVolume) || 0.15, 0), 1);
-      const finalOut = path.join(tmp, "final.mp4");
+	  try { fs.unlinkSync(currentPath); } catch {}
+	  try { fs.unlinkSync(voiceRaw); } catch {}
+	  try { fs.unlinkSync(voiceTrimmed); } catch {}
+	  currentPath = voicedOut;
+	}
 
-      await execPromise(
-        `ffmpeg -y -i "${currentPath}" -i "${musicFile}" ` +
-        `-filter_complex ` +
-        `"[1:a]volume=${mVol}[music];` +
-        `[0:a][music]amix=inputs=2:duration=first:dropout_transition=2[aout]" ` +
-        `-map 0:v -map "[aout]" ` +
-        `-c:v copy -c:a aac -b:a 128k -shortest ` +
-        `"${finalOut}"`
-      );
+    // ── 7. Mix background music (auto-trim + loop) ───────────────────────
+	if (music) {
+	  console.log("\n🎵 Step 7: Mixing background music (auto-trimmed)...");
+	  
+	  const musicExt = music.toLowerCase().includes(".m4a") ? "m4a" : "mp3";
+	  const musicRaw = path.join(tmp, `music_raw.${musicExt}`);
+	  await downloadFile(music, musicRaw);
 
-      try { fs.unlinkSync(currentPath); } catch {}
-      currentPath = finalOut;
-    }
+	  const videoDur = await getDuration(currentPath);
+	  const musicDur = await getDuration(musicRaw);
+	  
+	  console.log(`   Video: ${videoDur.toFixed(2)}s | Music: ${musicDur.toFixed(2)}s`);
+
+	  const musicTrimmed = path.join(tmp, "music_trimmed.aac");
+
+	  if (musicDur > videoDur) {
+		// Music longer → trim + fade out
+		const fadeStart = Math.max(0, videoDur - 2.0); // 2s fade for music
+		console.log(`   Trimming music from ${musicDur.toFixed(1)}s → ${videoDur.toFixed(1)}s`);
+		await execPromise(
+		  `ffmpeg -y -i "${musicRaw}" ` +
+		  `-t ${videoDur.toFixed(3)} ` +
+		  `-af "afade=t=in:st=0:d=1.0,afade=t=out:st=${fadeStart.toFixed(3)}:d=2.0" ` +
+		  `-c:a aac -ar 44100 -ac 2 -b:a 128k ` +
+		  `"${musicTrimmed}"`
+		);
+	  } else if (musicDur < videoDur - 1.0) {
+		// Music shorter → loop to fill video duration + fade out
+		const loopCount = Math.ceil(videoDur / musicDur);
+		const fadeStart = Math.max(0, videoDur - 2.0);
+		console.log(`   Looping music ${loopCount}x to fill ${videoDur.toFixed(1)}s`);
+		await execPromise(
+		  `ffmpeg -y -stream_loop ${loopCount - 1} -i "${musicRaw}" ` +
+		  `-t ${videoDur.toFixed(3)} ` +
+		  `-af "afade=t=in:st=0:d=1.0,afade=t=out:st=${fadeStart.toFixed(3)}:d=2.0" ` +
+		  `-c:a aac -ar 44100 -ac 2 -b:a 128k ` +
+		  `"${musicTrimmed}"`
+		);
+	  } else {
+		await execPromise(
+		  `ffmpeg -y -i "${musicRaw}" ` +
+		  `-af "afade=t=in:st=0:d=1.0" ` +
+		  `-c:a aac -ar 44100 -ac 2 -b:a 128k ` +
+		  `"${musicTrimmed}"`
+		);
+	  }
+
+	  const mVol = Math.min(Math.max(parseFloat(musicVolume) || 0.15, 0), 1);
+	  const finalOut = path.join(tmp, "final.mp4");
+
+	  await execPromise(
+		`ffmpeg -y -i "${currentPath}" -i "${musicTrimmed}" ` +
+		`-filter_complex ` +
+		`"[1:a]volume=${mVol}[music];` +
+		`[0:a][music]amix=inputs=2:duration=first:dropout_transition=2[aout]" ` +
+		`-map 0:v -map "[aout]" ` +
+		`-c:v copy -c:a aac -b:a 128k -shortest ` +
+		`"${finalOut}"`
+	  );
+
+	  try { fs.unlinkSync(currentPath); } catch {}
+	  try { fs.unlinkSync(musicRaw); } catch {}
+	  try { fs.unlinkSync(musicTrimmed); } catch {}
+	  currentPath = finalOut;
+	}
 
     // ── 8. Stream result to client ────────────────────────────────────────
     const stat = fs.statSync(currentPath);
