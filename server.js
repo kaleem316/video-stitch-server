@@ -276,7 +276,7 @@ app.post("/stitch", async (req, res) => {
     } = req.body;
      
 	 console.log("✅ addBrandIntroOutro:", addBrandIntroOutro);
-	 console.log("✅ brand:", escapeText(brand));
+	 console.log("✅ brand:", brand);
     // ── Validate (minimum 1 video now) ────────────────────────────────────
     if (!Array.isArray(videos) || videos.length < 1) {
       return res.status(400).json({ error: "Need at least 1 video URL" });
