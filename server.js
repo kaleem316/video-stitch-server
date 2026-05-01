@@ -254,7 +254,6 @@ console.log("📦 Incoming request:", req.body);
 // STITCH endpoint
 // ─────────────────────────────────────────────
 app.post("/stitch", async (req, res) => {
-	console.log("📦 Incoming request:", req.body);
   const tmp = path.join("/tmp", `stitch_${Date.now()}`);
 
   try {
