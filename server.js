@@ -235,13 +235,6 @@ async function stitchAllClips(normFiles, transitions, transitionDuration, tmp) {
   return currentFile;
 }
 
-function escapeText(text) {
-  return text
-    .replace(/:/g, '\\:')
-    .replace(/'/g, "\\'")
-    .replace(/,/g, '\\,');
-}
-
 async function createBrandClip(outputPath, brand, duration, width, height) {
   const text = `${brand.name || ""}\n${brand.phone || ""}\n${brand.location || ""}`;
 
@@ -252,7 +245,7 @@ async function createBrandClip(outputPath, brand, duration, width, height) {
 	  `-f lavfi -i color=c=black:s=${width}x${height}:d=${duration} ` +
 	  `-f lavfi -i anullsrc=r=44100:cl=stereo ` +   // 🔥 ADD THIS
 	  `-shortest ` +                                // 🔥 ADD THIS
-	  `-vf "drawtext=text='${escapeText(text)}':fontcolor=white:fontsize=28:` +
+	  `-vf "drawtext=text='${text}':fontcolor=white:fontsize=28:` +
 	  `x=(w-text_w)/2:y=(h-text_h)/2" ` +
 	  `-c:v libx264 -pix_fmt yuv420p ` +
 	  `-c:a aac -ar 44100 -ac 2 -b:a 128k ` +
