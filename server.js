@@ -249,7 +249,7 @@ async function createBrandClip(outputPath, brand, duration, width, height) {
     `"${outputPath}"`
   );
 }
-
+console.log("📦 Incoming request:", req.body);
 // ─────────────────────────────────────────────
 // STITCH endpoint
 // ─────────────────────────────────────────────
@@ -323,7 +323,7 @@ app.post("/stitch", async (req, res) => {
     const normFiles = videos.map((_, i) => path.join(tmp, `norm_${i}.mp4`));
 	let finalClips = [...normFiles];
 
-	if (addBrandIntroOutro && brand?.name) {
+	if (addBrandIntroOutro) {
 	  console.log("\n🏢 Adding brand intro/outro...");
 
 	  const introPath = path.join(tmp, "brand_intro.mp4");
@@ -335,18 +335,20 @@ app.post("/stitch", async (req, res) => {
 
 	  finalClips = [introPath, ...normFiles, outroPath];
 	}
-    const transArr  = videos.map((_, i) => transitions[i] || "fade");
+    const transArr  = finalClips.map((_, i) => transitions[i] || "fade");
 
     // ── 5. Stitch with transitions (pair by pair) ─────────────────────────
     let currentPath;
     if (finalClips.length === 1) {
       // Single video — no stitching needed
       console.log("\n📎 Step 5: Single video — skipping stitch...");
-      currentPath = normFiles[0];
+      currentPath = finalClips[0];
     } else {
       console.log("\n✂️  Step 5: Stitching with transitions...");
       currentPath = await stitchAllClips(finalClips, transArr, transitionDuration, tmp);
     }
+	console.log("🎬 FINAL CLIPS:", finalClips);
+	console.log("🎬 TOTAL:", finalClips.length);
 	
 	// ── 5b. Add fade-to-black at the end ──────────────────────────────────
 	const lastTransition = transArr[transArr.length - 1] || "fadeblack";
