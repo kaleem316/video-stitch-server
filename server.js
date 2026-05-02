@@ -301,18 +301,47 @@ app.post("/stitch", async (req, res) => {
     }
 
     const normFiles = videos.map((_, i) => path.join(tmp, `norm_${i}.mp4`));
-    const transArr  = videos.map((_, i) => transitions[i] || "fade");
+	// ── Brand intro/outro: convert images to 2-sec videos ──
+	if (req.body.addBrandIntroOutro && req.body.introImage) {
+	  console.log("🎬 Creating brand intro video from image...");
+	  const introImgPath = path.join(tmp, "intro_brand.png");
+	  await downloadFile(req.body.introImage, introImgPath);
 
-    // ── 5. Stitch with transitions (pair by pair) ─────────────────────────
-    let currentPath;
-    if (normFiles.length === 1) {
-      // Single video — no stitching needed
-      console.log("\n📎 Step 5: Single video — skipping stitch...");
-      currentPath = normFiles[0];
-    } else {
-      console.log("\n✂️  Step 5: Stitching with transitions...");
-      currentPath = await stitchAllClips(normFiles, transArr, transitionDuration, tmp);
-    }
+	  const introVidPath = path.join(tmp, "intro_brand.mp4");
+	  await execPromise(
+		`ffmpeg -y -loop 1 -i "${introImgPath}" ` +
+		`-c:v libx264 -t 2 -pix_fmt yuv420p ` +
+		`-vf "scale=${target.width}:${target.height}:force_original_aspect_ratio=decrease,` +
+		`pad=${target.width}:${target.height}:(ow-iw)/2:(oh-ih)/2:color=black,fps=25" ` +
+		`-f lavfi -i anullsrc=r=44100:cl=stereo -c:a aac -shortest ` +
+		`-preset ultrafast "${introVidPath}"`
+	  );
+
+	  normFiles.unshift(introVidPath);
+	  transArr.unshift("fade");
+	  console.log("✅ Intro prepended");
+	}
+
+	if (req.body.addBrandIntroOutro && req.body.outroImage) {
+	  console.log("🎬 Creating brand outro video from image...");
+	  const outroImgPath = path.join(tmp, "outro_brand.png");
+	  await downloadFile(req.body.outroImage, outroImgPath);
+
+	  const outroVidPath = path.join(tmp, "outro_brand.mp4");
+	  await execPromise(
+		`ffmpeg -y -loop 1 -i "${outroImgPath}" ` +
+		`-c:v libx264 -t 2 -pix_fmt yuv420p ` +
+		`-vf "scale=${target.width}:${target.height}:force_original_aspect_ratio=decrease,` +
+		`pad=${target.width}:${target.height}:(ow-iw)/2:(oh-ih)/2:color=black,fps=25" ` +
+		`-f lavfi -i anullsrc=r=44100:cl=stereo -c:a aac -shortest ` +
+		`-preset ultrafast "${outroVidPath}"`
+	  );
+
+	  normFiles.push(outroVidPath);
+	  transArr.push("fadeblack");
+	  console.log("✅ Outro appended");
+	}
+    const transArr  = videos.map((_, i) => transitions[i] || "fade");
 	// ── 4b. Create intro/outro from brand images ─────────────────────────
 	const introImage = req.body.introImage;
 	const outroImage = req.body.outroImage;
@@ -355,6 +384,18 @@ app.post("/stitch", async (req, res) => {
 	  normFiles.push(outroVidPath);
 	  transArr.push("fadeblack"); // fade to black at end
 	}
+
+    // ── 5. Stitch with transitions (pair by pair) ─────────────────────────
+    let currentPath;
+    if (normFiles.length === 1) {
+      // Single video — no stitching needed
+      console.log("\n📎 Step 5: Single video — skipping stitch...");
+      currentPath = normFiles[0];
+    } else {
+      console.log("\n✂️  Step 5: Stitching with transitions...");
+      currentPath = await stitchAllClips(normFiles, transArr, transitionDuration, tmp);
+    }
+	
 	
 	// ── 5b. Add fade-to-black at the end ──────────────────────────────────
 	const lastTransition = transArr[transArr.length - 1] || "fadeblack";
