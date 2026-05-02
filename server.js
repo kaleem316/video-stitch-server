@@ -342,49 +342,7 @@ app.post("/stitch", async (req, res) => {
 	  console.log("✅ Outro appended");
 	}
     const transArr  = videos.map((_, i) => transitions[i] || "fade");
-	// ── 4b. Create intro/outro from brand images ─────────────────────────
-	const introImage = req.body.introImage;
-	const outroImage = req.body.outroImage;
-	const brandDuration = req.body.brandDuration || 2;
-
-	if (introImage) {
-	  console.log("\n🎬 Step 4b: Creating brand intro video...");
-	  const introImgPath = path.join(tmp, "intro_img.png");
-	  await downloadFile(introImage, introImgPath);
-
-	  const introVidPath = path.join(tmp, "intro_vid.mp4");
-	  await execPromise(
-		`ffmpeg -y -loop 1 -i "${introImgPath}" -c:v libx264 -t ${brandDuration} ` +
-		`-pix_fmt yuv420p -vf "scale=${target.width}:${target.height}:force_original_aspect_ratio=decrease,` +
-		`pad=${target.width}:${target.height}:(ow-iw)/2:(oh-ih)/2:color=black,fps=25" ` +
-		`-f lavfi -i anullsrc=r=44100:cl=stereo -c:a aac -shortest ` +
-		`-preset ultrafast -crf 26 -threads 2 "${introVidPath}"`
-	  );
-
-	  // Prepend to normFiles
-	  normFiles.unshift(introVidPath);
-	  transArr.unshift("fade"); // fade into first video
-	}
-
-	if (outroImage) {
-	  console.log("\n🎬 Step 4b: Creating brand outro video...");
-	  const outroImgPath = path.join(tmp, "outro_img.png");
-	  await downloadFile(outroImage, outroImgPath);
-
-	  const outroVidPath = path.join(tmp, "outro_vid.mp4");
-	  await execPromise(
-		`ffmpeg -y -loop 1 -i "${outroImgPath}" -c:v libx264 -t ${brandDuration} ` +
-		`-pix_fmt yuv420p -vf "scale=${target.width}:${target.height}:force_original_aspect_ratio=decrease,` +
-		`pad=${target.width}:${target.height}:(ow-iw)/2:(oh-ih)/2:color=black,fps=25" ` +
-		`-f lavfi -i anullsrc=r=44100:cl=stereo -c:a aac -shortest ` +
-		`-preset ultrafast -crf 26 -threads 2 "${outroVidPath}"`
-	  );
-
-	  // Append to normFiles
-	  normFiles.push(outroVidPath);
-	  transArr.push("fadeblack"); // fade to black at end
-	}
-
+	
     // ── 5. Stitch with transitions (pair by pair) ─────────────────────────
     let currentPath;
     if (normFiles.length === 1) {
