@@ -359,7 +359,7 @@ app.post("/stitch", async (req, res) => {
 
 		  for (let i = startIndex; i < totalClips; i++) {
 			// skip last if it's outro
-			if (req.body.outroImage && i === totalClips - 1) continue;
+			if (req.body.outroImage && i === totalClips - 1) break;
 
 			const inputClip = normFiles[i];
 			const outputClip = path.join(tmp, `brand_${i}.mp4`);
@@ -376,6 +376,7 @@ app.post("/stitch", async (req, res) => {
 
 			normFiles[i] = outputClip;
 		  }
+		  console.log("TOTAL CLIPS:", normFiles.length);
 		}
 	  console.log("✅ Intro prepended");
 	}
