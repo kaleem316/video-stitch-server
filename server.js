@@ -235,6 +235,30 @@ async function stitchAllClips(normFiles, transitions, transitionDuration, tmp) {
   return currentFile;
 }
 
+
+// ─────────────────────────────────────────────
+// Adding addBrand to video clips 
+// ─────────────────────────────────────────────
+async function addBrandText(input, output, text, width, height) {
+  const safeText = text.replace(/[:\\']/g, ""); // avoid FFmpeg crash
+
+  await execPromise(
+    `ffmpeg -y -i "${input}" ` +
+    `-vf "drawtext=` +
+    `text='${safeText}':` +
+    `fontcolor=white:` +
+    `fontsize=40:` +
+    `x=(w-text_w)/2:` +
+    `y=50:` +
+    `alpha='if(lt(t,1),t,1)':` + // fade in animation
+    `enable='lt(t,3)'` +         // show only first 3 sec
+    `" ` +
+    `-c:v libx264 -preset ultrafast -crf 26 ` +
+    `-c:a copy ` +
+    `"${output}"`
+  );
+}
+
 // ─────────────────────────────────────────────
 // STITCH endpoint
 // ─────────────────────────────────────────────
@@ -323,6 +347,23 @@ app.post("/stitch", async (req, res) => {
 
 	  normFiles.unshift(introVidPath);
 	  transArr.unshift("fade");
+	  
+	 /// 👇 ADD brand on Video HERE
+		if (req.body.addBrandIntroOutro && req.body.brand?.name) {
+		  console.log("✨ Adding brand text overlay...");
+
+		  const brandedFirst = path.join(tmp, "brand_first.mp4");
+
+		  await addBrandText(
+			normFiles[0],   // 👈 this will now be your intro video
+			brandedFirst,
+			req.body.brand.name,
+			target.width,
+			target.height
+		  );
+
+		  normFiles[0] = brandedFirst;
+		}
 	  console.log("✅ Intro prepended");
 	}
 
