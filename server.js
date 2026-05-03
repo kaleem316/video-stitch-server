@@ -266,31 +266,35 @@ async function addBrandText(input, output, brand, width, height) {
   if (phone && location) {
     // Two lines: phone above location, both center-aligned at bottom
     filters.push(
-      `drawtext=text='${phone}':` +
-      `fontsize=${bottomSize}:fontcolor=white:` +
-      `x=(w-text_w)/2:y=h-text_h*2-${padY}-${lineGap}:` +
-      `box=1:boxcolor=black@0.5:boxborderw=6`
-    );
+	  `drawtext=text='${phone}':` +
+	  `fontsize=${bottomSize}:fontcolor=white:` +
+	  `x=(w-text_w)/2:` +
+	  `y=h-${padY}-text_h*2-${lineGap}:` +   // above location with gap
+	  `box=1:boxcolor=black@0.5:boxborderw=6`
+	);																							
     filters.push(
-      `drawtext=text='${location}':` +
-      `fontsize=${bottomSize}:fontcolor=white:` +
-      `x=(w-text_w)/2:y=h-text_h-${padY}:` +
-      `box=1:boxcolor=black@0.5:boxborderw=6`
-    );
+	  `drawtext=text='${location}':` +
+	  `fontsize=${bottomSize}:fontcolor=white:` +
+	  `x=(w-text_w)/2:` +
+	  `y=h-${padY}-text_h:` +   // bottom line
+	  `box=1:boxcolor=black@0.5:boxborderw=6`
+	);
   } else if (phone) {
     filters.push(
-      `drawtext=text='${phone}':` +
-      `fontsize=${bottomSize}:fontcolor=white:` +
-      `x=(w-text_w)/2:y=h-text_h-${padY}:` +
-      `box=1:boxcolor=black@0.5:boxborderw=6`
-    );
+	  `drawtext=text='${phone}':` +
+	  `fontsize=${bottomSize}:fontcolor=white:` +
+	  `x=(w-text_w)/2:` +
+	  `y=h-${padY}-text_h*2-${lineGap}:` +   // above location with gap
+	  `box=1:boxcolor=black@0.5:boxborderw=6`
+	);
   } else if (location) {
     filters.push(
-      `drawtext=text='${location}':` +
-      `fontsize=${bottomSize}:fontcolor=white:` +
-      `x=(w-text_w)/2:y=h-text_h-${padY}:` +
-      `box=1:boxcolor=black@0.5:boxborderw=6`
-    );
+	  `drawtext=text='${location}':` +
+	  `fontsize=${bottomSize}:fontcolor=white:` +
+	  `x=(w-text_w)/2:` +
+	  `y=h-${padY}-text_h:` +   // bottom line
+	  `box=1:boxcolor=black@0.5:boxborderw=6`
+	);
   }
 
   if (filters.length === 0) {
