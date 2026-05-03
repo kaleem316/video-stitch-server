@@ -350,19 +350,32 @@ app.post("/stitch", async (req, res) => {
 	  
 	 /// 👇 ADD brand on Video HERE
 		if (req.body.addBrandIntroOutro && req.body.brand?.name) {
-		  console.log("✨ Adding brand text overlay...");
+		  console.log("✨ Adding brand text on video clips...");
 
-		  const brandedFirst = path.join(tmp, "brand_first.mp4");
+		  const totalClips = normFiles.length;
 
-		  await addBrandText(
-			normFiles[0],   // 👈 this will now be your intro video
-			brandedFirst,
-			req.body.brand.name,
-			target.width,
-			target.height
-		  );
+		  // If intro exists → skip index 0
+		  const startIndex = req.body.introImage ? 1 : 0;
 
-		  normFiles[0] = brandedFirst;
+		  for (let i = startIndex; i < totalClips; i++) {
+			// skip last if it's outro
+			if (req.body.outroImage && i === totalClips - 1) break;
+
+			const inputClip = normFiles[i];
+			const outputClip = path.join(tmp, `brand_${i}.mp4`);
+
+			console.log(`🎯 Adding text on clip ${i}`);
+
+			await addBrandText(
+			  inputClip,
+			  outputClip,
+			  req.body.brand.name,
+			  target.width,
+			  target.height
+			);
+
+			normFiles[i] = outputClip;
+		  }
 		}
 	  console.log("✅ Intro prepended");
 	}
