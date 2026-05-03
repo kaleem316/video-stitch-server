@@ -268,9 +268,8 @@ async function addBrandText(input, output, brand, width, height) {
     filters.push(
       `drawtext=text='${phone}':` +
 	  `fontsize=${bottomSize}:fontcolor=white:` +
-	  `x=(w-text_w)/2:` +
-	  `y=h-${padY}-text_h*2-${lineGap}:` +   // above location with gap
-	  `box=1:boxcolor=black@0.5:boxborderw=6`
+	  `x=(w-text_w)/2:y=h-${bottomSize * 2 + 30}:` +
+      `box=1:boxcolor=black@0.5:boxborderw=6`
     );			
     filters.push(
 	  `drawtext=text='${location}':` +
@@ -283,9 +282,8 @@ async function addBrandText(input, output, brand, width, height) {
     filters.push(
 	  `drawtext=text='${phone}':` +
 	  `fontsize=${bottomSize}:fontcolor=white:` +
-	  `x=(w-text_w)/2:` +
-	  `y=h-${padY}-text_h*2-${lineGap}:` +   // above location with gap
-	  `box=1:boxcolor=black@0.5:boxborderw=6`
+	  `x=(w-text_w)/2:y=h-${bottomSize * 2 + 30}:` +
+      `box=1:boxcolor=black@0.5:boxborderw=6`
 	);
   } else if (location) {
     filters.push(
