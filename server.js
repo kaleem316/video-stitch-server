@@ -239,21 +239,61 @@ async function stitchAllClips(normFiles, transitions, transitionDuration, tmp) {
 // ─────────────────────────────────────────────
 // Adding addBrand to video clips 
 // ─────────────────────────────────────────────
-async function addBrandText(input, output, text, width, height) {
-  const safeText = text.replace(/[:\\']/g, ""); // avoid FFmpeg crash
+async function addBrandText(input, output, brand, width, height) {
+  const name = (brand.name || "").replace(/'/g, "\\'").replace(/:/g, "\\:");
+  const phone = (brand.phone || "").replace(/'/g, "\\'").replace(/:/g, "\\:");
+  const location = (brand.location || "").replace(/'/g, "\\'").replace(/:/g, "\\:");
+
+  // Scale font sizes based on resolution
+  const nameSize = Math.round(height * 0.04);    // ~22px at 540p
+  const bottomSize = Math.round(height * 0.03);  // ~16px at 540p
+  const padX = Math.round(width * 0.02);
+  const padY = Math.round(height * 0.015);
+
+  let filters = [];
+
+  // Brand name — top center with dark background
+  if (name) {
+    filters.push(
+      `drawtext=text='${name}':` +
+      `fontsize=${nameSize}:fontcolor=white:` +
+      `x=(w-text_w)/2:y=${padY}:` +
+      `box=1:boxcolor=black@0.5:boxborderw=8`
+    );
+  }
+
+  // Phone — bottom left with dark background
+  if (phone) {
+    filters.push(
+      `drawtext=text='${phone}':` +
+      `fontsize=${bottomSize}:fontcolor=white:` +
+      `x=${padX}:y=h-text_h-${padY}:` +
+      `box=1:boxcolor=black@0.5:boxborderw=6`
+    );
+  }
+
+  // Location — bottom right with dark background
+  if (location) {
+    filters.push(
+      `drawtext=text='${location}':` +
+      `fontsize=${bottomSize}:fontcolor=white:` +
+      `x=w-text_w-${padX}:y=h-text_h-${padY}:` +
+      `box=1:boxcolor=black@0.5:boxborderw=6`
+    );
+  }
+
+  if (filters.length === 0) {
+    fs.copyFileSync(input, output);
+    return;
+  }
+
+  const filterStr = filters.join(",");
 
   await execPromise(
     `ffmpeg -y -i "${input}" ` +
-    `-vf "drawtext=` +
-    `text='${safeText}':` +
-    `fontcolor=white:` +
-    `fontsize=40:` +
-    `x=(w-text_w)/2:` +
-    `y=50:` +
-    `alpha='if(lt(t,1),t,1)':` + // fade in animation
-    `enable='lt(t,3)'` +         // show only first 3 sec
-    `" ` +
-    `-c:v libx264 -preset ultrafast -crf 26 ` +
+    `-vf "${filterStr}" ` +
+    `-c:v libx264 -preset ultrafast -crf 26 -threads 2 ` +
+    `-pix_fmt yuv420p ` +
     `-c:a copy ` +
     `"${output}"`
   );
@@ -348,35 +388,30 @@ app.post("/stitch", async (req, res) => {
 	  normFiles.unshift(introVidPath);
 	  transArr.unshift("fade");
 	  
-	 /// 👇 ADD brand on Video HERE
+		/// 👇 ADD brand on Video HERE
 		if (req.body.addBrandIntroOutro && req.body.brand?.name) {
 		  console.log("✨ Adding brand text on video clips...");
-
 		  const totalClips = normFiles.length;
-
-		  // If intro exists → skip index 0
 		  const startIndex = req.body.introImage ? 1 : 0;
 
 		  for (let i = startIndex; i < totalClips; i++) {
-			// skip last if it's outro
 			if (req.body.outroImage && i === totalClips - 1) break;
 
 			const inputClip = normFiles[i];
 			const outputClip = path.join(tmp, `brand_${i}.mp4`);
-
-			console.log(`🎯 Adding text on clip ${i}`);
+			console.log(`🎯 Adding brand overlay on clip ${i}`);
 
 			await addBrandText(
 			  inputClip,
 			  outputClip,
-			  req.body.brand.name,
+			  req.body.brand, // pass full brand object
 			  target.width,
 			  target.height
 			);
 
 			normFiles[i] = outputClip;
 		  }
-		  console.log("TOTAL CLIPS:", normFiles.length);
+		  console.log("✅ Brand overlay added to all clips");
 		}
 	  console.log("✅ Intro prepended");
 	}
