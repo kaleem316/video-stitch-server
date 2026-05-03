@@ -247,6 +247,8 @@ async function addBrandText(input, output, brand, width, height) {
   const nameSize = Math.round(height * 0.04);
   const bottomSize = Math.round(height * 0.028);
   const padX = Math.round(width * 0.02);
+  const padY = Math.round(height * 0.015);
+  const lineGap = Math.round(height * 0.005);
 
   let filters = [];
 
@@ -260,24 +262,39 @@ async function addBrandText(input, output, brand, width, height) {
     );
   }
 
-  // Phone — fixed position from bottom (line 2)
-  if (phone) {
+  // Phone — bottom center, second line from bottom
+  if (phone && location) {
+    // Two lines: phone above location, both center-aligned at bottom
     filters.push(
       `drawtext=text='${phone}':` +
-      `fontsize=${bottomSize}:fontcolor=white:` +
-      `x=(w-text_w)/2:y=h-${bottomSize * 2 + 30}:` +
-      `box=1:boxcolor=black@0.5:boxborderw=6`
-    );
-  }
-
-  // Location — fixed position from bottom (line 1)
-  if (location) {
+	  `fontsize=${bottomSize}:fontcolor=white:` +
+	  `x=(w-text_w)/2:` +
+	  `y=h-${padY}-text_h*2-${lineGap}:` +   // above location with gap
+	  `box=1:boxcolor=black@0.5:boxborderw=6`
+    );			
     filters.push(
-      `drawtext=text='${location}':` +
-      `fontsize=${bottomSize}:fontcolor=white:` +
-      `x=(w-text_w)/2:y=h-${bottomSize + 12}:` +
-      `box=1:boxcolor=black@0.5:boxborderw=6`
-    );
+	  `drawtext=text='${location}':` +
+	  `fontsize=${bottomSize}:fontcolor=white:` +
+	  `x=(w-text_w)/2:` +
+	  `y=h-${padY}-text_h:` +   // bottom line
+	  `box=1:boxcolor=black@0.5:boxborderw=6`
+	);
+  } else if (phone) {
+    filters.push(
+	  `drawtext=text='${phone}':` +
+	  `fontsize=${bottomSize}:fontcolor=white:` +
+	  `x=(w-text_w)/2:` +
+	  `y=h-${padY}-text_h*2-${lineGap}:` +   // above location with gap
+	  `box=1:boxcolor=black@0.5:boxborderw=6`
+	);
+  } else if (location) {
+    filters.push(
+	  `drawtext=text='${location}':` +
+	  `fontsize=${bottomSize}:fontcolor=white:` +
+	  `x=(w-text_w)/2:` +
+	  `y=h-${padY}-text_h:` +   // bottom line
+	  `box=1:boxcolor=black@0.5:boxborderw=6`
+	);
   }
 
   if (filters.length === 0) {
@@ -386,43 +403,34 @@ app.post("/stitch", async (req, res) => {
 	  normFiles.unshift(introVidPath);
 	  transArr.unshift("fade");
 	  
-		// ── Add brand text AFTER intro/outro are inserted into normFiles ──
+		/// 👇 ADD brand on ALL middle video clips (skip intro and outro)
 		if (req.body.addBrandIntroOutro && req.body.brand?.name) {
 		  console.log("✨ Adding brand text on video clips...");
 		  const totalClips = normFiles.length;
 
 		  for (let i = 0; i < totalClips; i++) {
-			// Skip intro (first clip if intro exists)
-			if (req.body.introImage && i === 0) {
-			  console.log(`⏭️ Skipping clip ${i} (intro)`);
-			  continue;
-			}
-			// Skip outro (last clip if outro exists)
-			if (req.body.outroImage && i === totalClips - 1) {
-			  console.log(`⏭️ Skipping clip ${i} (outro)`);
-			  continue;
-			}
+			// Skip first clip if it's the brand intro image
+			if (req.body.introImage && i === 0) continue;
+			// Skip last clip if it's the brand outro image
+			if (req.body.outroImage && i === totalClips - 1) continue;
 
 			const inputClip = normFiles[i];
-			const outputClip = path.join(tmp, `branded_${i}.mp4`);
-			console.log(`🎯 Adding brand overlay on clip ${i}: ${path.basename(inputClip)}`);
+			const outputClip = path.join(tmp, `brand_${i}.mp4`);
+			console.log(`🎯 Adding brand overlay on clip ${i}`);
 
-			try {
-			  await addBrandText(
-				inputClip,
-				outputClip,
-				req.body.brand,
-				target.width,
-				target.height
-			  );
-			  try { fs.unlinkSync(inputClip); } catch {}
-			  normFiles[i] = outputClip;
-			} catch (err) {
-			  console.error(`❌ Brand overlay failed on clip ${i}:`, err.message);
-			  // Keep original clip if overlay fails
-			}
+			await addBrandText(
+			  inputClip,
+			  outputClip,
+			  req.body.brand,
+			  target.width,
+			  target.height
+			);
+
+			// Replace with branded version
+			try { fs.unlinkSync(inputClip); } catch {}
+			normFiles[i] = outputClip;
 		  }
-		  console.log("✅ Brand overlay done on", totalClips, "clips");
+		  console.log("✅ Brand overlay added to", totalClips - (req.body.introImage ? 1 : 0) - (req.body.outroImage ? 1 : 0), "clips");
 		}
 	  console.log("✅ Intro prepended");
 	}
