@@ -429,30 +429,31 @@ app.post("/stitch", async (req, res) => {
 		if (req.body.addBrandIntroOutro && req.body.brand?.name) {
 		  console.log("✨ Adding brand text on video clips...");
 		  const totalClips = normFiles.length;
-		  
+
 		  for (let i = 0; i < totalClips; i++) {
-			if (req.body.introImage && i === 0) {
-			  console.log(`⏭️ Skip clip ${i} (intro)`);
-			  continue;
-			}
-			if (req.body.outroImage && i === totalClips - 1) {
-			  console.log(`⏭️ Skip clip ${i} (outro)`);
-			  continue;
-			}
+			// Skip first clip if it's the brand intro image
+			if (req.body.introImage && i === 0) continue;
+			// Skip last clip if it's the brand outro image
+			if (req.body.outroImage && i === totalClips - 1) continue;
 
 			const inputClip = normFiles[i];
-			const outputClip = path.join(tmp, `branded_${i}.mp4`);
-			console.log(`🎯 Branding clip ${i}: ${path.basename(inputClip)}`);
+			const outputClip = path.join(tmp, `brand_${i}.mp4`);
+			console.log(`🎯 Adding brand overlay on clip ${i}`);
 
-			try {
-			  await addBrandText(inputClip, outputClip, req.body.brand, target.width, target.height, req.body.brandTextStyle || "classic");
-			  try { fs.unlinkSync(inputClip); } catch {}
-			  normFiles[i] = outputClip;
-			  console.log(`✅ Clip ${i} branded`);
-			} catch (err) {
-			  console.error(`❌ Brand failed on clip ${i}:`, err.message);
-			}
+			await addBrandText(
+			  inputClip,
+			  outputClip,
+			  req.body.brand,
+			  target.width,
+			  target.height,
+			  req.body.textStyle || "classic"
+			);
+
+			// Replace with branded version
+			try { fs.unlinkSync(inputClip); } catch {}
+			normFiles[i] = outputClip;
 		  }
+		  console.log("✅ Brand overlay added to", totalClips - (req.body.introImage ? 1 : 0) - (req.body.outroImage ? 1 : 0), "clips");
 		}
 	  console.log("✅ Intro prepended");
 	}
