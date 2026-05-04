@@ -308,18 +308,18 @@ async function addBrandText(input, output, brand, width, height, brandTextStyle)
   if (phone) {
     filters.push(
       `drawtext=text='${phone}':` +
-      `fontsize=${bottomSize}:fontcolor=${brandTextStyle === "banner" ? "white" : "white"}:` +
+      `fontsize=${bottomSize}:fontcolor=${nameColor}:` +
       `x=(w-text_w)/2:y=h-${bottomSize * 2 + 30}:` +
-      `box=1:boxcolor=${bottomBoxColor}:boxborderw=6`
+      `box=1:boxcolor=${boxColor}:boxborderw=6`
     );
   }
 
   if (location) {
     filters.push(
       `drawtext=text='${location}':` +
-      `fontsize=${bottomSize}:fontcolor=${brandTextStyle === "banner" ? "white" : "white"}:` +
+      `fontsize=${bottomSize}:fontcolor=${nameColor}:` +
       `x=(w-text_w)/2:y=h-${bottomSize + 12}:` +
-      `box=1:boxcolor=${bottomBoxColor}:boxborderw=6`
+      `box=1:boxcolor=${boxColor}:boxborderw=6`
     );
   }
 
