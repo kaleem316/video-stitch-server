@@ -245,7 +245,7 @@ async function addBrandText(input, output, brand, width, height, brandTextStyle)
   const location = (brand.location || "").replace(/'/g, "\\'").replace(/:/g, "\\:");
 
   const nameSize = Math.round(height * 0.04);
-  const bottomSize = Math.round(height * 0.01);
+  const bottomSize = Math.round(height * 0.021);
 
   let nameColor = "white";
   let boxColor = "black@0.5";
