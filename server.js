@@ -432,7 +432,7 @@ app.post("/stitch", async (req, res) => {
 		if (req.body.addBrandIntroOutro && req.body.brand?.name) {
 		  console.log("✨ Adding brand text on video clips...");
 		  const totalClips = normFiles.length;
-
+		  console.log(`✨ Total Clips : ${totalClips}`);
 		  for (let i = 0; i < totalClips; i++) {
 			// Skip first clip if it's the brand intro image
 			if (req.body.introImage && i === 0) continue;
