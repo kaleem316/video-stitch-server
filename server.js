@@ -466,14 +466,17 @@ app.post("/stitch", async (req, res) => {
 
 		  const introVidPath = path.join(tmp, "intro_brand.mp4");
 		  await execPromise(
-			  `ffmpeg -y -loop 1 -i "${introImgPath}" ` +
-			  `-f lavfi -i anullsrc=r=44100:cl=stereo ` +
-			  `-vf "scale=${target.width}:${target.height}:force_original_aspect_ratio=decrease,` +
-			  `pad=${target.width}:${target.height}:(ow-iw)/2:(oh-ih)/2:color=black,fps=25" ` +
-			  `-c:v libx264 -pix_fmt yuv420p -t 2 ` +
-			  `-c:a aac -shortest ` +
-			  `-preset ultrafast "${introVidPath}"`
-			);
+				  `ffmpeg -y -loop 1 -i "${introImgPath}" ` +
+				  `-f lavfi -i anullsrc=r=44100:cl=stereo ` +
+				  `-filter_complex ` +
+				  `"[0:v]scale=${target.width}:${target.height}:force_original_aspect_ratio=decrease,` +
+				  `pad=${target.width}:${target.height}:(ow-iw)/2:(oh-ih)/2:color=black,` +
+				  `fps=25,format=yuv420p[v]" ` +
+				  `-map "[v]" -map 1:a ` +
+				  `-c:v libx264 -preset ultrafast -t 2 ` +
+				  `-c:a aac -shortest ` +
+				  `"${introVidPath}"`
+				);
 
 		  normFiles.unshift(introVidPath);
 		  transArr.unshift("fade");
@@ -487,14 +490,17 @@ app.post("/stitch", async (req, res) => {
 
 		  const outroVidPath = path.join(tmp, "outro_brand.mp4");
 		 await execPromise(
-			  `ffmpeg -y -loop 1 -i "${outroImgPath}" ` +
-			  `-f lavfi -i anullsrc=r=44100:cl=stereo ` +
-			  `-vf "scale=${target.width}:${target.height}:force_original_aspect_ratio=decrease,` +
-			  `pad=${target.width}:${target.height}:(ow-iw)/2:(oh-ih)/2:color=black,fps=25" ` +
-			  `-c:v libx264 -pix_fmt yuv420p -t 2 ` +
-			  `-c:a aac -shortest ` +
-			  `-preset ultrafast "${outroVidPath}"`
-			);
+				  `ffmpeg -y -loop 1 -i "${outroImgPath}" ` +
+				  `-f lavfi -i anullsrc=r=44100:cl=stereo ` +
+				  `-filter_complex ` +
+				  `"[0:v]scale=${target.width}:${target.height}:force_original_aspect_ratio=decrease,` +
+				  `pad=${target.width}:${target.height}:(ow-iw)/2:(oh-ih)/2:color=black,` +
+				  `fps=25,format=yuv420p[v]" ` +
+				  `-map "[v]" -map 1:a ` +
+				  `-c:v libx264 -preset ultrafast -t 2 ` +
+				  `-c:a aac -shortest ` +
+				  `"${outroVidPath}"`
+				);
 
 		  normFiles.push(outroVidPath);
 		  transArr.push("fadeblack");
