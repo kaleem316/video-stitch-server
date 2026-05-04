@@ -458,28 +458,77 @@ app.post("/stitch", async (req, res) => {
 	  console.log("✅ Intro prepended");
 	}
 
-	if (req.body.addBrandIntroOutro && req.body.outroImage) {
-	  console.log("🎬 Creating brand outro video from image...");
-	  const outroImgPath = path.join(tmp, "outro_brand.png");
-	  await downloadFile(req.body.outroImage, outroImgPath);
+	// ── 4b. Create intro/outro from brand images ──
+		if (req.body.addBrandIntroOutro && req.body.introImage) {
+		  console.log("\n🎬 Creating brand intro video...");
+		  const introImgPath = path.join(tmp, "intro_brand.png");
+		  await downloadFile(req.body.introImage, introImgPath);
 
-	  const outroVidPath = path.join(tmp, "outro_brand.mp4");
-	  await execPromise(
-			  `ffmpeg -y ` +
-			  `-loop 1 -i "${outroImgPath}" ` +
-			  `-f lavfi -i anullsrc=r=44100:cl=stereo ` +   // ✅ moved here
-			  `-t 2 ` +
-			  `-vf "scale=${target.width}:${target.height}:force_original_aspect_ratio=decrease,` +
-			  `pad=${target.width}:${target.height}:(ow-iw)/2:(oh-ih)/2:color=black,fps=25" ` +
-			  `-c:v libx264 -preset ultrafast -pix_fmt yuv420p ` +
-			  `-c:a aac -shortest ` +
-			  `"${outroVidPath}"`
-			);
+		  const introVidPath = path.join(tmp, "intro_brand.mp4");
+		  await execPromise(
+			`ffmpeg -y -loop 1 -i "${introImgPath}" -c:v libx264 -t 2 ` +
+			`-pix_fmt yuv420p -vf "scale=${target.width}:${target.height}:force_original_aspect_ratio=decrease,` +
+			`pad=${target.width}:${target.height}:(ow-iw)/2:(oh-ih)/2:color=black,fps=25" ` +
+			`-f lavfi -i anullsrc=r=44100:cl=stereo -c:a aac -shortest ` +
+			`-preset ultrafast "${introVidPath}"`
+		  );
 
-	  normFiles.push(outroVidPath);
-	  transArr.push("fadeblack");
-	  console.log("✅ Outro appended");
-	}
+		  normFiles.unshift(introVidPath);
+		  transArr.unshift("fade");
+		  console.log("✅ Intro prepended");
+		}
+
+		if (req.body.addBrandIntroOutro && req.body.outroImage) {
+		  console.log("\n🎬 Creating brand outro video...");
+		  const outroImgPath = path.join(tmp, "outro_brand.png");
+		  await downloadFile(req.body.outroImage, outroImgPath);
+
+		  const outroVidPath = path.join(tmp, "outro_brand.mp4");
+		  await execPromise(
+			`ffmpeg -y -loop 1 -i "${outroImgPath}" -c:v libx264 -t 2 ` +
+			`-pix_fmt yuv420p -vf "scale=${target.width}:${target.height}:force_original_aspect_ratio=decrease,` +
+			`pad=${target.width}:${target.height}:(ow-iw)/2:(oh-ih)/2:color=black,fps=25" ` +
+			`-f lavfi -i anullsrc=r=44100:cl=stereo -c:a aac -shortest ` +
+			`-preset ultrafast "${outroVidPath}"`
+		  );
+
+		  normFiles.push(outroVidPath);
+		  transArr.push("fadeblack");
+		  console.log("✅ Outro appended");
+		}
+
+		// ── 4c. Brand overlay AFTER intro/outro are in normFiles ──
+		if (req.body.addBrandIntroOutro && req.body.brand?.name) {
+		  console.log("✨ Adding brand text on video clips...");
+		  const totalClips = normFiles.length;
+		  console.log(`Total clips: ${totalClips} (intro: ${req.body.introImage ? 'yes' : 'no'}, outro: ${req.body.outroImage ? 'yes' : 'no'})`);
+
+		  for (let i = 0; i < totalClips; i++) {
+			if (req.body.introImage && i === 0) {
+			  console.log(`⏭️ Skip clip ${i} (intro)`);
+			  continue;
+			}
+			if (req.body.outroImage && i === totalClips - 1) {
+			  console.log(`⏭️ Skip clip ${i} (outro)`);
+			  continue;
+			}
+
+			const inputClip = normFiles[i];
+			const outputClip = path.join(tmp, `branded_${i}.mp4`);
+			console.log(`🎯 Branding clip ${i}: ${path.basename(inputClip)}`);
+
+			try {
+			  await addBrandText(inputClip, outputClip, req.body.brand, target.width, target.height, req.body.brandTextStyle || "classic");
+			  try { fs.unlinkSync(inputClip); } catch {}
+			  normFiles[i] = outputClip;
+			  console.log(`✅ Clip ${i} branded`);
+			} catch (err) {
+			  console.error(`❌ Brand failed on clip ${i}:`, err.message);
+			}
+		  }
+		}
+
+
    
 	
     // ── 5. Stitch with transitions (pair by pair) ─────────────────────────
