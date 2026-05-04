@@ -239,60 +239,88 @@ async function stitchAllClips(normFiles, transitions, transitionDuration, tmp) {
 // ─────────────────────────────────────────────
 // Adding addBrand to video clips 
 // ─────────────────────────────────────────────
-async function addBrandText(input, output, brand, width, height) {
+async function addBrandText(input, output, brand, width, height, brandTextStyle) {
   const name = (brand.name || "").replace(/'/g, "\\'").replace(/:/g, "\\:");
   const phone = (brand.phone || "").replace(/'/g, "\\'").replace(/:/g, "\\:");
   const location = (brand.location || "").replace(/'/g, "\\'").replace(/:/g, "\\:");
 
   const nameSize = Math.round(height * 0.04);
   const bottomSize = Math.round(height * 0.028);
-  const padX = Math.round(width * 0.02);
-  const padY = Math.round(height * 0.015);
-  const lineGap = Math.round(height * 0.005);
+
+  let nameColor = "white";
+  let boxColor = "black@0.5";
+  let boxBorder = 10;
+  let bottomBoxColor = "black@0.5";
+
+  // Style-specific colors
+  switch (brandTextStyle) {
+    case "elegant":
+      nameColor = "#D4A853";
+      boxColor = "black@0.6";
+      break;
+    case "neon":
+      nameColor = "#00E5FF";
+      boxColor = "black@0.7";
+      bottomBoxColor = "black@0.7";
+      break;
+    case "bold":
+      nameColor = "white";
+      boxColor = "#1F2937@0.9";
+      boxBorder = 14;
+      break;
+    case "banner":
+      nameColor = "#111827";
+      boxColor = "white@0.85";
+      bottomBoxColor = "#111827@0.8";
+      break;
+    case "glass":
+      nameColor = "white";
+      boxColor = "white@0.15";
+      bottomBoxColor = "black@0.3";
+      break;
+    case "editorial":
+      nameColor = "#111827";
+      boxColor = "white@0.95";
+      boxBorder = 8;
+      break;
+    case "minimal":
+      nameColor = "white";
+      boxColor = "black@0.0";
+      boxBorder = 0;
+      bottomBoxColor = "black@0.4";
+      break;
+    default: // classic
+      nameColor = "white";
+      boxColor = "black@0.5";
+  }
 
   let filters = [];
 
-  // Brand name — top center
   if (name) {
     filters.push(
       `drawtext=text='${name}':` +
-      `fontsize=${nameSize}:fontcolor=white:` +
+      `fontsize=${nameSize}:fontcolor=${nameColor}:` +
       `x=(w-text_w)/2:y=15:` +
-      `box=1:boxcolor=black@0.5:boxborderw=10`
+      `box=1:boxcolor=${boxColor}:boxborderw=${boxBorder}`
     );
   }
 
-  // Phone — bottom center, second line from bottom
-  if (phone && location) {
-    // Two lines: phone above location, both center-aligned at bottom
+  if (phone) {
     filters.push(
       `drawtext=text='${phone}':` +
-	  `fontsize=${bottomSize}:fontcolor=white:` +
-	  `x=(w-text_w)/2:y=h-${bottomSize * 2 + 30}:` +
-      `box=1:boxcolor=black@0.5:boxborderw=6`
-    );			
+      `fontsize=${bottomSize}:fontcolor=${textStyle === "banner" ? "white" : "white"}:` +
+      `x=(w-text_w)/2:y=h-${bottomSize * 2 + 30}:` +
+      `box=1:boxcolor=${bottomBoxColor}:boxborderw=6`
+    );
+  }
+
+  if (location) {
     filters.push(
-	  `drawtext=text='${location}':` +
-	  `fontsize=${bottomSize}:fontcolor=white:` +
-	  `x=(w-text_w)/2:` +
-	  `y=h-${padY}-text_h:` +   // bottom line
-	  `box=1:boxcolor=black@0.5:boxborderw=6`
-	);
-  } else if (phone) {
-    filters.push(
-	  `drawtext=text='${phone}':` +
-	  `fontsize=${bottomSize}:fontcolor=white:` +
-	  `x=(w-text_w)/2:y=h-${bottomSize * 2 + 30}:` +
-      `box=1:boxcolor=black@0.5:boxborderw=6`
-	);
-  } else if (location) {
-    filters.push(
-	  `drawtext=text='${location}':` +
-	  `fontsize=${bottomSize}:fontcolor=white:` +
-	  `x=(w-text_w)/2:` +
-	  `y=h-${padY}-text_h:` +   // bottom line
-	  `box=1:boxcolor=black@0.5:boxborderw=6`
-	);
+      `drawtext=text='${location}':` +
+      `fontsize=${bottomSize}:fontcolor=${textStyle === "banner" ? "white" : "white"}:` +
+      `x=(w-text_w)/2:y=h-${bottomSize + 12}:` +
+      `box=1:boxcolor=${bottomBoxColor}:boxborderw=6`
+    );
   }
 
   if (filters.length === 0) {
@@ -300,15 +328,11 @@ async function addBrandText(input, output, brand, width, height) {
     return;
   }
 
-  const filterStr = filters.join(",");
-
   await execPromise(
     `ffmpeg -y -i "${input}" ` +
-    `-vf "${filterStr}" ` +
+    `-vf "${filters.join(",")}" ` +
     `-c:v libx264 -preset ultrafast -crf 26 -threads 2 ` +
-    `-pix_fmt yuv420p ` +
-    `-c:a copy ` +
-    `"${output}"`
+    `-pix_fmt yuv420p -c:a copy "${output}"`
   );
 }
 
@@ -405,30 +429,30 @@ app.post("/stitch", async (req, res) => {
 		if (req.body.addBrandIntroOutro && req.body.brand?.name) {
 		  console.log("✨ Adding brand text on video clips...");
 		  const totalClips = normFiles.length;
-
+		  
 		  for (let i = 0; i < totalClips; i++) {
-			// Skip first clip if it's the brand intro image
-			if (req.body.introImage && i === 0) continue;
-			// Skip last clip if it's the brand outro image
-			if (req.body.outroImage && i === totalClips - 1) continue;
+			if (req.body.introImage && i === 0) {
+			  console.log(`⏭️ Skip clip ${i} (intro)`);
+			  continue;
+			}
+			if (req.body.outroImage && i === totalClips - 1) {
+			  console.log(`⏭️ Skip clip ${i} (outro)`);
+			  continue;
+			}
 
 			const inputClip = normFiles[i];
-			const outputClip = path.join(tmp, `brand_${i}.mp4`);
-			console.log(`🎯 Adding brand overlay on clip ${i}`);
+			const outputClip = path.join(tmp, `branded_${i}.mp4`);
+			console.log(`🎯 Branding clip ${i}: ${path.basename(inputClip)}`);
 
-			await addBrandText(
-			  inputClip,
-			  outputClip,
-			  req.body.brand,
-			  target.width,
-			  target.height
-			);
-
-			// Replace with branded version
-			try { fs.unlinkSync(inputClip); } catch {}
-			normFiles[i] = outputClip;
+			try {
+			  await addBrandText(inputClip, outputClip, req.body.brand, target.width, target.height, req.body.brandTextStyle || "classic");
+			  try { fs.unlinkSync(inputClip); } catch {}
+			  normFiles[i] = outputClip;
+			  console.log(`✅ Clip ${i} branded`);
+			} catch (err) {
+			  console.error(`❌ Brand failed on clip ${i}:`, err.message);
+			}
 		  }
-		  console.log("✅ Brand overlay added to", totalClips - (req.body.introImage ? 1 : 0) - (req.body.outroImage ? 1 : 0), "clips");
 		}
 	  console.log("✅ Intro prepended");
 	}
