@@ -308,7 +308,7 @@ async function addBrandText(input, output, brand, width, height, brandTextStyle)
   if (phone) {
     filters.push(
       `drawtext=text='${phone}':` +
-      `fontsize=${bottomSize}:fontcolor=${textStyle === "banner" ? "white" : "white"}:` +
+      `fontsize=${bottomSize}:fontcolor=${brandTextStyle === "banner" ? "white" : "white"}:` +
       `x=(w-text_w)/2:y=h-${bottomSize * 2 + 30}:` +
       `box=1:boxcolor=${bottomBoxColor}:boxborderw=6`
     );
@@ -317,7 +317,7 @@ async function addBrandText(input, output, brand, width, height, brandTextStyle)
   if (location) {
     filters.push(
       `drawtext=text='${location}':` +
-      `fontsize=${bottomSize}:fontcolor=${textStyle === "banner" ? "white" : "white"}:` +
+      `fontsize=${bottomSize}:fontcolor=${brandTextStyle === "banner" ? "white" : "white"}:` +
       `x=(w-text_w)/2:y=h-${bottomSize + 12}:` +
       `box=1:boxcolor=${bottomBoxColor}:boxborderw=6`
     );
