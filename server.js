@@ -446,7 +446,7 @@ app.post("/stitch", async (req, res) => {
 			  req.body.brand,
 			  target.width,
 			  target.height,
-			  req.body.textStyle || "classic"
+			  req.body.brandTextStyle || "classic"
 			);
 
 			// Replace with branded version
