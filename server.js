@@ -244,7 +244,7 @@ async function addBrandText(input, output, brand, width, height, brandTextStyle)
   const phone = (brand.phone || "").replace(/'/g, "\\'").replace(/:/g, "\\:");
   const location = (brand.location || "").replace(/'/g, "\\'").replace(/:/g, "\\:");
 
-  const nameSize = Math.round(height * 0.04);
+  const nameSize = Math.round(height * 0.02);
   const bottomSize = Math.round(height * 0.028);
 
   let nameColor = "white";
