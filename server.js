@@ -437,7 +437,7 @@ app.post("/stitch", async (req, res) => {
 			// Skip first clip if it's the brand intro image
 			if (req.body.introImage && i === 0) continue;
 			// Skip last clip if it's the brand outro image
-			if (req.body.outroImage && i === totalClips - 1) continue;
+			//if (req.body.outroImage && i === totalClips - 1) continue;
 
 			const inputClip = normFiles[i];
 			const outputClip = path.join(tmp, `brand_${i}.mp4`);
