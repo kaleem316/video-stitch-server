@@ -246,15 +246,30 @@ async function addHookText(input, output, hookText, width, height) {
     return;
   }
 
-  const fontSize = Math.round(height * 0.045);
-  const maxWidth = width - 80;
+  // Wrap long text into multiple lines (max 30 chars per line)
+  const words = hook.split(' ');
+  let lines = [];
+  let currentLine = '';
+  for (const word of words) {
+    if ((currentLine + ' ' + word).trim().length > 30) {
+      lines.push(currentLine.trim());
+      currentLine = word;
+    } else {
+      currentLine += ' ' + word;
+    }
+  }
+  if (currentLine.trim()) lines.push(currentLine.trim());
+  const wrappedText = lines.join('\\n');
+
+  const fontSize = Math.round(height * 0.035);
 
   await execPromise(
     `ffmpeg -y -i "${input}" ` +
-    `-vf "drawtext=text='${hook}':` +
+    `-vf "drawtext=text='${wrappedText}':` +
     `fontsize=${fontSize}:fontcolor=white:` +
     `x=(w-text_w)/2:y=(h-text_h)/2:` +
-    `box=1:boxcolor=black@0.6:boxborderw=16:` +
+    `line_spacing=10:` +
+    `box=1:boxcolor=black@0.6:boxborderw=20:` +
     `enable='between(t,0,3)'" ` +
     `-c:v libx264 -preset ultrafast -crf 26 -threads 2 ` +
     `-pix_fmt yuv420p -c:a copy "${output}"`
