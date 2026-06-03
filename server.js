@@ -246,12 +246,15 @@ async function addHookText(input, output, hookText, width, height) {
     return;
   }
 
-  // Wrap long text into multiple lines (max 30 chars per line)
+  const fontSize = Math.round(height * 0.028);
+  const lineHeight = Math.round(fontSize * 1.6);
+
+  // Split into lines (max 25 chars per line)
   const words = hook.split(' ');
   let lines = [];
   let currentLine = '';
   for (const word of words) {
-    if ((currentLine + ' ' + word).trim().length > 30) {
+    if ((currentLine + ' ' + word).trim().length > 25) {
       lines.push(currentLine.trim());
       currentLine = word;
     } else {
@@ -259,18 +262,24 @@ async function addHookText(input, output, hookText, width, height) {
     }
   }
   if (currentLine.trim()) lines.push(currentLine.trim());
-  const wrappedText = lines.join('\\n');
 
-  const fontSize = Math.round(height * 0.035);
+  // Calculate starting Y to center all lines
+  const totalHeight = lines.length * lineHeight;
+  const startY = Math.round((height - totalHeight) / 2);
+
+  // One drawtext filter per line
+  const filters = lines.map((line, i) => {
+    const y = startY + (i * lineHeight);
+    return `drawtext=text='${line}':` +
+      `fontsize=${fontSize}:fontcolor=white:` +
+      `x=(w-text_w)/2:y=${y}:` +
+      `box=1:boxcolor=black@0.6:boxborderw=12:` +
+      `enable='between(t,0,3)'`;
+  }).join(',');
 
   await execPromise(
     `ffmpeg -y -i "${input}" ` +
-    `-vf "drawtext=text='${wrappedText}':` +
-    `fontsize=${fontSize}:fontcolor=white:` +
-    `x=(w-text_w)/2:y=(h-text_h)/2:` +
-    `line_spacing=10:` +
-    `box=1:boxcolor=black@0.6:boxborderw=20:` +
-    `enable='between(t,0,3)'" ` +
+    `-vf "${filters}" ` +
     `-c:v libx264 -preset ultrafast -crf 26 -threads 2 ` +
     `-pix_fmt yuv420p -c:a copy "${output}"`
   );
