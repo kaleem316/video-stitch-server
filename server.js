@@ -235,6 +235,31 @@ async function stitchAllClips(normFiles, transitions, transitionDuration, tmp) {
   return currentFile;
 }
 
+// ─────────────────────────────────────────────
+// Adding HOOK text overlay on first clip
+// ─────────────────────────────────────────────
+async function addHookText(input, output, hookText, width, height) {
+  const hook = (hookText || "").replace(/'/g, "\\'").replace(/:/g, "\\:");
+
+  if (!hook) {
+    fs.copyFileSync(input, output);
+    return;
+  }
+
+  const fontSize = Math.round(height * 0.045);
+  const maxWidth = width - 80;
+
+  await execPromise(
+    `ffmpeg -y -i "${input}" ` +
+    `-vf "drawtext=text='${hook}':` +
+    `fontsize=${fontSize}:fontcolor=white:` +
+    `x=(w-text_w)/2:y=(h-text_h)/2:` +
+    `box=1:boxcolor=black@0.6:boxborderw=16:` +
+    `enable='between(t,0,3)'" ` +
+    `-c:v libx264 -preset ultrafast -crf 26 -threads 2 ` +
+    `-pix_fmt yuv420p -c:a copy "${output}"`
+  );
+}
 
 // ─────────────────────────────────────────────
 // Adding addBrand to video clips 
@@ -457,6 +482,30 @@ app.post("/stitch", async (req, res) => {
 			normFiles[i] = outputClip;
 		  }
 		  console.log("✅ Brand overlay added to", totalClips - (req.body.introImage ? 1 : 0) - (req.body.outroImage ? 1 : 0), "clips");
+		  // ── Add HOOK text on first content clip ──
+			if (req.body.hookText) {
+			  console.log("🪝 Adding hook text overlay...");
+
+			  // Find first content clip (skip brand intro if exists)
+			  const hookIndex = req.body.introImage ? 1 : 0;
+
+			  if (hookIndex < normFiles.length) {
+				const inputClip = normFiles[hookIndex];
+				const outputClip = path.join(tmp, `hook_${hookIndex}.mp4`);
+
+				await addHookText(
+				  inputClip,
+				  outputClip,
+				  req.body.hookText,
+				  target.width,
+				  target.height
+				);
+
+				try { fs.unlinkSync(inputClip); } catch {}
+				normFiles[hookIndex] = outputClip;
+				console.log("✅ Hook text added to clip", hookIndex);
+			  }
+			}
 		}
 
 	if (req.body.addBrandIntroOutro && req.body.outroImage) {
