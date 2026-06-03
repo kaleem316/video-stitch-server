@@ -163,7 +163,7 @@ async function normalizeClip(input, output, targetWidth, targetHeight) {
     `pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2:color=black,` +
     `fps=25,` +
     `format=yuv420p" ` +
-    `-c:v libx264 -preset ultrafast -crf 26 -threads 2 ` +
+    `-c:v libx264 -preset fast -crf 20 -threads 4 -pix_fmt yuv420p -movflags +faststart ` +
     `-c:a aac -ar 44100 -ac 2 -b:a 128k ` +
     `"${output}"`
   );
@@ -200,7 +200,7 @@ async function applyTransition(clipA, clipB, output, transition, duration) {
     `"[0:v][1:v]xfade=transition=${ffTrans}:duration=${td}:offset=${offset.toFixed(3)}[vout];` +
     `[0:a][1:a]acrossfade=d=${td}[aout]" ` +
     `-map "[vout]" -map "[aout]" ` +
-    `-c:v libx264 -preset ultrafast -crf 26 -threads 2 ` +
+    `-c:v libx264 -preset fast -crf 20 -threads 4 -pix_fmt yuv420p -movflags +faststart ` +
     `-pix_fmt yuv420p ` +
     `-c:a aac -ar 44100 -ac 2 -b:a 128k ` +
     `"${output}"`
@@ -280,7 +280,7 @@ async function addHookText(input, output, hookText, width, height) {
   await execPromise(
     `ffmpeg -y -i "${input}" ` +
     `-vf "${filters}" ` +
-    `-c:v libx264 -preset ultrafast -crf 26 -threads 2 ` +
+    `-c:v libx264 -preset fast -crf 20 -threads 4 -pix_fmt yuv420p -movflags +faststart ` +
     `-pix_fmt yuv420p -c:a copy "${output}"`
   );
 }
@@ -380,7 +380,7 @@ async function addBrandText(input, output, brand, width, height, brandTextStyle)
   await execPromise(
     `ffmpeg -y -i "${input}" ` +
     `-vf "${filters.join(",")}" ` +
-    `-c:v libx264 -preset ultrafast -crf 26 -threads 2 ` +
+    `-c:v libx264 -preset fast -crf 20 -threads 4 -pix_fmt yuv420p -movflags +faststart ` +
     `-pix_fmt yuv420p -c:a copy "${output}"`
   );
 }
@@ -466,7 +466,7 @@ app.post("/stitch", async (req, res) => {
 			  `-t 2 ` +
 			  `-vf "scale=${target.width}:${target.height}:force_original_aspect_ratio=decrease,` +
 			  `pad=${target.width}:${target.height}:(ow-iw)/2:(oh-ih)/2:color=black,fps=25" ` +
-			  `-c:v libx264 -preset ultrafast -pix_fmt yuv420p ` +
+			  `-c:v libx264 -preset fast -crf 20 -threads 4 -pix_fmt yuv420p -movflags +faststart ` +
 			  `-c:a aac -shortest ` +
 			  `"${introVidPath}"`
 			);
@@ -545,7 +545,7 @@ app.post("/stitch", async (req, res) => {
 			  `-t 2 ` +
 			  `-vf "scale=${target.width}:${target.height}:force_original_aspect_ratio=decrease,` +
 			  `pad=${target.width}:${target.height}:(ow-iw)/2:(oh-ih)/2:color=black,fps=25" ` +
-			  `-c:v libx264 -preset ultrafast -pix_fmt yuv420p ` +
+			  `-c:v libx264 -preset fast -crf 20 -threads 4 -pix_fmt yuv420p -movflags +faststart ` +
 			  `-c:a aac -shortest ` +
 			  `"${outroVidPath}"`
 			);
@@ -580,7 +580,7 @@ app.post("/stitch", async (req, res) => {
 		`ffmpeg -y -i "${currentPath}" ` +
 		`-vf "fade=t=out:st=${fadeOutStart.toFixed(3)}:d=1.5:color=black" ` +
 		`-af "afade=t=out:st=${fadeOutStart.toFixed(3)}:d=1.5" ` +
-		`-c:v libx264 -preset ultrafast -crf 26 -threads 2 ` +
+		`-c:v libx264 -preset fast -crf 20 -threads 4 -pix_fmt yuv420p -movflags +faststart ` +
 		`-pix_fmt yuv420p ` +
 		`-c:a aac -ar 44100 -ac 2 -b:a 128k ` +
 		`"${fadedOut}"`
